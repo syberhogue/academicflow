@@ -38,6 +38,11 @@ import { Badge, Card } from '../ui';
                       <div>
                           <div className="font-bold text-slate-900 mb-0.5">{course.code}</div>
                           <div className="text-sm font-medium text-slate-600">{course.title}</div>
+                          {course.discipline && (
+                            <div className="mt-1">
+                              <Badge type="info">{course.discipline}</Badge>
+                            </div>
+                          )}
                       </div>
                   </div>
                   <Badge type="neutral">{course.credits !== undefined ? course.credits : 3} cr</Badge>

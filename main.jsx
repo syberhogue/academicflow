@@ -13,9 +13,42 @@ import {
   swapCoursesAcrossSemesters
 } from './src/programActions';
 
+const PROGRAMS_STORAGE_KEY = 'academicflow.programs.v1';
+const MAP_SAVED_AT_STORAGE_KEY = 'academicflow.mapSavedAt.v1';
+
+const loadProgramsFromStorage = () => {
+  try {
+    const storedPrograms = localStorage.getItem(PROGRAMS_STORAGE_KEY);
+    if (!storedPrograms) {
+      return INITIAL_DATA;
+    }
+
+    const parsedPrograms = JSON.parse(storedPrograms);
+    if (!Array.isArray(parsedPrograms)) {
+      return INITIAL_DATA;
+    }
+
+    return parsedPrograms;
+  } catch (error) {
+    console.error('Failed to load saved programs from localStorage', error);
+    return INITIAL_DATA;
+  }
+};
+
+const loadSavedAtFromStorage = () => {
+  try {
+    return localStorage.getItem(MAP_SAVED_AT_STORAGE_KEY);
+  } catch (error) {
+    console.error('Failed to load saved timestamp from localStorage', error);
+    return null;
+  }
+};
+
 export default function App() {
-  const [programs, setPrograms] = useState(INITIAL_DATA);
+  const [programs, setPrograms] = useState(loadProgramsFromStorage);
   const [globalCourses, setGlobalCourses] = useState(INITIAL_COURSES);
+  const [mapLastSavedAt, setMapLastSavedAt] = useState(loadSavedAtFromStorage);
+  const [createSeed, setCreateSeed] = useState(null);
   const [activeView, setActiveView] = useState('dashboard');
   const [selectedProgramId, setSelectedProgramId] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -32,6 +65,9 @@ export default function App() {
   const navigateTo = (view) => {
     setActiveView(view);
     setMobileMenuOpen(false);
+    if (view !== 'create') {
+      setCreateSeed(null);
+    }
     if (view !== 'detail') {
       setSelectedProgramId(null);
     }
@@ -39,11 +75,12 @@ export default function App() {
 
   const handleCreateProgram = (event) => {
     event.preventDefault();
-    const program = createProgramFromForm(new FormData(event.target));
+    const program = createProgramFromForm(new FormData(event.target), programs);
 
     setPrograms((currentPrograms) => [...currentPrograms, program]);
     setSelectedProgramId(program.id);
     setActiveView('detail');
+    setCreateSeed(null);
   };
 
   const handleAddGlobalCourse = (event) => {
@@ -65,8 +102,8 @@ export default function App() {
     setPrograms((currentPrograms) => insertCourseInProgram(currentPrograms, progId, semesterId, index, course));
   };
 
-  const removeCourse = (progId, semesterId, courseCode) => {
-    setPrograms((currentPrograms) => removeCourseFromProgram(currentPrograms, progId, semesterId, courseCode));
+  const removeCourse = (progId, semesterId, courseIndex) => {
+    setPrograms((currentPrograms) => removeCourseFromProgram(currentPrograms, progId, semesterId, courseIndex));
   };
 
   const moveCourse = (progId, sourceSemId, sourceIndex, targetSemId, targetIndex) => {
@@ -75,9 +112,138 @@ export default function App() {
     );
   };
 
+  const toggleCoreCourse = (progId, semesterId, courseIndex) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) => {
+        if (program.id !== progId) {
+          return program;
+        }
+
+        return {
+          ...program,
+          semesters: program.semesters.map((semester) => {
+            if (semester.id !== semesterId) {
+              return semester;
+            }
+
+            const updatedCourses = [...semester.courses];
+            const currentCourse = updatedCourses[courseIndex];
+            if (!currentCourse) {
+              return semester;
+            }
+
+            updatedCourses[courseIndex] = {
+              ...currentCourse,
+              isCore: !currentCourse.isCore
+            };
+
+            return { ...semester, courses: updatedCourses };
+          })
+        };
+      })
+    );
+  };
+
+  const updateSpecializationBlocks = (progId, specializationBlocks) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) =>
+        program.id === progId
+          ? {
+              ...program,
+              specializationBlocks
+            }
+          : program
+      )
+    );
+  };
+
+  const updateProgramName = (progId, name) => {
+    const trimmedName = String(name || '').trim();
+    if (!trimmedName) {
+      return;
+    }
+
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) =>
+        program.id === progId
+          ? {
+              ...program,
+              name: trimmedName
+            }
+          : program
+      )
+    );
+  };
+
+  const updateElectiveSuggestionMaps = (progId, electiveSuggestionMaps) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) =>
+        program.id === progId
+          ? {
+              ...program,
+              electiveSuggestionMaps
+            }
+          : program
+      )
+    );
+  };
+
   const handleCloseModal = () => {
     setElectiveModalSlot(null);
     setCourseSearchTerm('');
+  };
+
+  const handleSaveCurriculumMap = () => {
+    try {
+      localStorage.setItem(PROGRAMS_STORAGE_KEY, JSON.stringify(programs));
+      const savedAt = new Date().toISOString();
+      localStorage.setItem(MAP_SAVED_AT_STORAGE_KEY, savedAt);
+      setMapLastSavedAt(savedAt);
+    } catch (error) {
+      console.error('Failed to save curriculum map', error);
+    }
+  };
+
+  const handleCreateDerivedProgram = (derivedType, parentProgram) => {
+    setCreateSeed({
+      type: derivedType,
+      parentProgramId: parentProgram.id,
+      parentProgramName: parentProgram.name,
+      faculty: parentProgram.faculty,
+      lead: parentProgram.lead,
+      discipline: parentProgram.discipline || '',
+      description:
+        derivedType === 'Specialization'
+          ? `Specialization stream derived from ${parentProgram.name}.`
+          : `Minor stream derived from ${parentProgram.name}.`
+    });
+    setActiveView('create');
+  };
+
+  const handleDuplicateSpecialization = (sourceProgram) => {
+    const timestamp = Date.now();
+    const duplicatedProgram = {
+      ...sourceProgram,
+      id: `prog_${timestamp}`,
+      name: `${sourceProgram.name} (Copy)`,
+      status: 'Drafting',
+      milestones: sourceProgram.milestones.map((milestone, index) => ({
+        ...milestone,
+        id: `m_${timestamp}_${index + 1}`,
+        completed: milestone.name === 'Initial Proposal',
+        date: milestone.name === 'Initial Proposal' ? new Date().toISOString().split('T')[0] : null
+      })),
+      reviews: [],
+      specializationBlocks: (sourceProgram.specializationBlocks || []).map((block, blockIndex) => ({
+        ...block,
+        id: `spec_block_${timestamp}_${blockIndex + 1}`,
+        courses: Array.from({ length: 6 }).map(() => null)
+      }))
+    };
+
+    setPrograms((currentPrograms) => [...currentPrograms, duplicatedProgram]);
+    setSelectedProgramId(duplicatedProgram.id);
+    setActiveView('detail');
   };
 
   return (
@@ -129,7 +295,10 @@ export default function App() {
         {activeView === 'dashboard' && (
           <DashboardView
             programs={programs}
-            onCreateProgram={() => setActiveView('create')}
+            onCreateProgram={() => {
+              setCreateSeed(null);
+              setActiveView('create');
+            }}
             onOpenProgram={(programId) => {
               setSelectedProgramId(programId);
               setActiveView('detail');
@@ -139,7 +308,9 @@ export default function App() {
         {activeView === 'create' && (
           <CreateProgramView
             handleCreateProgram={handleCreateProgram}
-            onBackToDashboard={() => setActiveView('dashboard')}
+            onBackToDashboard={() => navigateTo('dashboard')}
+            programs={programs}
+            createSeed={createSeed}
           />
         )}
         {activeView === 'detail' && (
@@ -160,6 +331,14 @@ export default function App() {
             insertCourse={insertCourse}
             handleCloseModal={handleCloseModal}
             moveCourse={moveCourse}
+            onSaveMap={handleSaveCurriculumMap}
+            mapLastSavedAt={mapLastSavedAt}
+            onCreateDerivedProgram={handleCreateDerivedProgram}
+            onDuplicateSpecialization={handleDuplicateSpecialization}
+            toggleCoreCourse={toggleCoreCourse}
+            updateSpecializationBlocks={updateSpecializationBlocks}
+            updateProgramName={updateProgramName}
+            updateElectiveSuggestionMaps={updateElectiveSuggestionMaps}
           />
         )}
         {activeView === 'courses' && (

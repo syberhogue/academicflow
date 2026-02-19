@@ -1,0 +1,40 @@
+GAME ELECTIVES 
+Discipline: Programming
+INFR 1350: Introduction to Computer Graphics
+INFR 2350: Intermediate Computer Graphics
+INFR 3830: Distributed Systems and Networking
+INFR 2820: Algorithms and Data Structures
+INFR 3110: Game Engine Design and Implementation
+INFR 3380: Industrial Design for Game Hardware Development
+INFR 2100: Programming in C/C++
+INFR 4460: Emerging Technologies
+INFR 2020: Essential Math for Games 3
+INFR 4450: Advanced Graphics or Games
+INFR 2810: Computer Architecture
+
+Discipline: Technical Art
+INFR 2345: Modeling and Animation Systems 1
+INFR 3370: Intermediate Rigging
+INFR 3345: Modeling and Animation Systems 2
+INFR 3315: Cinematic Systems Design
+INFR 4445: Advanced Rigging
+INFR 4440: Advanced Sculpting
+
+Discipline: Design 
+INFR 2330: Intermediate Game Design
+INFR 4120: Serious Games
+INFR 2370: Game Sound
+INFR 2310: AI & Animation for Games
+INFR 4400: Gamification 
+INFR 4370: Advanced Game Sound
+INFR 3360: Virtual Spaces and Level Design
+INFR 3370: Social & Emotional Game Design
+INFR 4350: Human-Computer Interaction For Games
+
+Discipline: GUR (Game User Research)
+INFR 3250: UX Research
+INFR 4345: Game Analytics
+INFR 3350: Games User Research
+
+
+

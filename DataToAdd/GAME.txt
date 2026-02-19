@@ -1,0 +1,24 @@
+REQUIRED CORE COURSES for GAME DEVELOPMENT AND INTERACTIVE MEDIA (GDIM)
+Year 1
+INFR 1020U – Essential Mathematics for Games I
+INFR 1030U – Essential Mathematics for Games II
+INFR 1100U – Programming for Games I
+INFR 1110U – Programming for Games II
+INFR 1315U – Visual Narrative Foundations
+INFR 1325U – Introduction to 2D Animation for Games
+INFR 1330U – Basic Introduction to Game Design
+INFR 1335U – Digital Game Design
+INFR 1395U – Game Development Workshop I
+INFR 1396U – Game Development Workshop II
+Year 2
+BUSI 1600U – Management of the Enterprise
+INFR 2395U – Game Development Workshop III
+INFR 2396U – Game Development Workshop IV
+Year 3
+BUSI 2550U – Introduction to Project Management
+INFR 3395U – Game Development Workshop V
+INFR 3396U – Game Development Workshop VI
+Year 4
+INFR 4560U – Law and Ethics in Game Development
+INFR 4395U – Game Development Workshop VII
+INFR 4396U – Game Development Workshop VIII

@@ -1,28 +1,113 @@
-export const createProgramFromForm = (formData) => {
+export const createProgramFromForm = (formData, existingPrograms = []) => {
   const timestamp = Date.now();
+  const type = formData.get('type');
+  const isMinor = type === 'Minor';
+  const isSpecialization = type === 'Specialization';
+  const applyCiqeTemplate = formData.get('ciqeTemplate') === 'on' || isMinor || isSpecialization;
+  const parentProgramId = formData.get('parentProgram') || null;
+  const parentProgram = parentProgramId
+    ? existingPrograms.find((program) => program.id === parentProgramId) || null
+    : null;
+  const requiredSpecializationCourses = Number(
+    formData.get('requiredSpecializationCourses') || (isSpecialization ? 3 : isMinor ? 6 : 0)
+  );
+  const requiredCourseCodes = String(formData.get('requiredCourseCodes') || '')
+    .split(/[\n,]+/)
+    .map((code) => code.trim())
+    .filter(Boolean);
+  const lockedCoreCourseCodes =
+    isSpecialization && parentProgram
+      ? Array.from(
+          new Set(
+            parentProgram.semesters.flatMap((semester) =>
+              semester.courses.filter((course) => course?.isCore).map((course) => course.code)
+            )
+          )
+        )
+      : [];
+
+  const createDefaultSpecializationRows = () =>
+    Array.from({ length: Math.max(requiredSpecializationCourses, 0) }).map((_, index) => ({
+      id: `spec_block_${timestamp}_${index + 1}`,
+      name: `Specialization Row ${index + 1}`,
+      rowType: 'required',
+      chooseCount: 1,
+      courses: Array.from({ length: 6 }).map(() => null)
+    }));
+
+  const buildSemesters = () => {
+    if (applyCiqeTemplate && parentProgram) {
+      return parentProgram.semesters.map((semester) => ({
+        ...semester,
+        courses: [...semester.courses]
+      }));
+    }
+
+    if (applyCiqeTemplate && isMinor) {
+      return [
+        { id: `sem_${timestamp}_0`, name: 'Minor Block 1', courses: [] },
+        { id: `sem_${timestamp}_1`, name: 'Minor Block 2', courses: [] },
+        { id: `sem_${timestamp}_2`, name: 'Minor Block 3', courses: [] }
+      ];
+    }
+
+    if (applyCiqeTemplate && isSpecialization) {
+      return [
+        { id: `sem_${timestamp}_0`, name: 'Specialization Block 1', courses: [] },
+        { id: `sem_${timestamp}_1`, name: 'Specialization Block 2', courses: [] }
+      ];
+    }
+
+    return Array.from({ length: 8 }).map((_, i) => ({
+      id: `sem_${timestamp}_${i}`,
+      name: `Year ${Math.floor(i / 2) + 1} - ${i % 2 === 0 ? 'Fall' : 'Winter'}`,
+      courses: []
+    }));
+  };
 
   return {
     id: `prog_${timestamp}`,
     name: formData.get('name'),
-    type: formData.get('type'),
+    type,
+    discipline: formData.get('discipline') || null,
     faculty: formData.get('faculty'),
     lead: formData.get('lead'),
+    parentProgramId: parentProgram?.id || null,
+    parentProgram: parentProgram?.name || null,
+    parentProgramType: parentProgram?.type || null,
+    parentProgramDiscipline: parentProgram?.discipline || null,
+    lockedCoreCourseCodes,
+    parentBaselineSemesters: parentProgram
+      ? parentProgram.semesters.map((semester) => ({
+          ...semester,
+          courses: [...semester.courses]
+        }))
+      : null,
+    ciqeTemplateApplied: applyCiqeTemplate,
+    ciqeGuidelines: applyCiqeTemplate
+      ? {
+          minCredits: isMinor ? 18 : isSpecialization ? 9 : null,
+          maxCredits: isMinor || isSpecialization ? 24 : null,
+          recommendedCourses: isMinor ? 6 : isSpecialization ? 3 : null,
+          requiredSpecializationCourses: requiredSpecializationCourses || null,
+          requiredCourseCodes
+        }
+      : null,
     status: 'Drafting',
     description: formData.get('description'),
     milestones: [
       { id: 'm1', name: 'Initial Proposal', completed: true, date: new Date().toISOString().split('T')[0] },
+      { id: 'm1b', name: 'CIQE Requirement Check', completed: applyCiqeTemplate, date: applyCiqeTemplate ? new Date().toISOString().split('T')[0] : null },
       { id: 'm2', name: 'Budget Approval', completed: false, date: null },
       { id: 'm3', name: 'Curriculum Map', completed: false, date: null },
       { id: 'm4', name: 'External Review', completed: false, date: null },
       { id: 'm5', name: 'Senate Approval', completed: false, date: null },
       { id: 'm6', name: 'Ministry Submission', completed: false, date: null }
     ],
-    semesters: Array.from({ length: 8 }).map((_, i) => ({
-      id: `sem_${timestamp}_${i}`,
-      name: `Year ${Math.floor(i / 2) + 1} - ${i % 2 === 0 ? 'Fall' : 'Winter'}`,
-      courses: []
-    })),
+    semesters: buildSemesters(),
     reviews: [],
+    specializationBlocks: isSpecialization ? createDefaultSpecializationRows() : [],
+    electiveSuggestionMaps: {},
     facultyMembers: [{ id: `f_${timestamp}`, name: formData.get('lead'), role: 'Program Lead' }]
   };
 };
@@ -56,7 +141,7 @@ export const insertCourseInProgram = (programs, progId, semesterId, index, cours
     };
   });
 
-export const removeCourseFromProgram = (programs, progId, semesterId, courseCode) =>
+export const removeCourseFromProgram = (programs, progId, semesterId, courseIndex) =>
   programs.map((program) => {
     if (program.id !== progId) {
       return program;
@@ -69,9 +154,12 @@ export const removeCourseFromProgram = (programs, progId, semesterId, courseCode
           return semester;
         }
 
+        const updatedCourses = [...semester.courses];
+        updatedCourses[courseIndex] = null;
+
         return {
           ...semester,
-          courses: semester.courses.filter((course) => course.code !== courseCode)
+          courses: updatedCourses
         };
       })
     };
