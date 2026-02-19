@@ -1,5 +1,6 @@
 import React from 'react';
-import { AlertCircle, ArrowLeft, BookOpen, Check, Clock, FileText, Search, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, BookOpen, Check, Clock, FileText, Plus, Search, Users, X } from 'lucide-react';
+import { PROGRAM_TYPES } from '../data';
 import { Badge, Card, ProgressBar } from '../ui';
 
 export function ProgramDetailView(props) {
