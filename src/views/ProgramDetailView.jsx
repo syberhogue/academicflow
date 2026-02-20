@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { AlertCircle, ArrowLeft, BookOpen, Check, Clock, FileText, Plus, Search, Users, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, ArrowLeft, BookOpen, Check, Clock, FileText, Lock, Plus, Search, Users, X } from 'lucide-react';
 import { PROGRAM_TYPES } from '../data';
 import { Badge, Card, ProgressBar } from '../ui';
 
@@ -35,6 +35,7 @@ export function ProgramDetailView(props) {
   const [specializationSelectMode, setSpecializationSelectMode] = useState(false);
   const [selectedElectiveSlots, setSelectedElectiveSlots] = useState([]);
   const [newBlockChooseCount, setNewBlockChooseCount] = useState(2);
+  const [modalDisciplineFilter, setModalDisciplineFilter] = useState('All');
   const [isEditingProgramName, setIsEditingProgramName] = useState(false);
   const [editedProgramName, setEditedProgramName] = useState('');
   const showCiqePanel =
@@ -210,6 +211,32 @@ export function ProgramDetailView(props) {
       }, {})
     : {};
   const electiveTypesInMap = Object.keys(electiveCreditBreakdown).sort((a, b) => a.localeCompare(b));
+  const modalDisciplineOptions = useMemo(() => {
+    const unique = new Set(
+      (globalCourses || [])
+        .map((course) => course.discipline || 'Uncategorized')
+        .filter(Boolean)
+    );
+    return ['All', ...Array.from(unique).sort((a, b) => a.localeCompare(b))];
+  }, [globalCourses]);
+  const selectedElectiveSlotSet = useMemo(() => new Set(selectedElectiveSlots), [selectedElectiveSlots]);
+
+  const setDragPayload = (event, payload) => {
+    const serialized = JSON.stringify(payload);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/json', serialized);
+    event.dataTransfer.setData('text/plain', serialized);
+  };
+
+  const getDragPayload = (event) => {
+    const raw = event.dataTransfer.getData('application/json') || event.dataTransfer.getData('text/plain');
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return null;
+    }
+  };
 
   const isElectiveCourse = (course) => !!getElectiveCategory(course);
   const isSelectableForSpecialization = (course) =>
@@ -487,6 +514,12 @@ export function ProgramDetailView(props) {
   }, [selectedProgram?.id, activeTab]);
 
   useEffect(() => {
+    if (!electiveModalSlot) {
+      setModalDisciplineFilter('All');
+    }
+  }, [electiveModalSlot]);
+
+  useEffect(() => {
     setIsEditingProgramName(false);
     setEditedProgramName(selectedProgram?.name || '');
   }, [selectedProgram?.id, selectedProgram?.name]);
@@ -735,20 +768,30 @@ export function ProgramDetailView(props) {
                       </div>
                       <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                         {selectedProgram.type === 'Specialization' && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSpecializationSelectMode((current) => !current);
-                              setSelectedElectiveSlots([]);
-                            }}
-                            className={`w-full sm:w-auto px-4 py-2 border rounded-lg text-sm font-medium transition-colors ${
-                              specializationSelectMode
-                                ? 'border-amber-400 bg-amber-50 text-amber-800'
-                                : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            {specializationSelectMode ? 'Selection Mode On' : 'Select Electives'}
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSpecializationSelectMode((current) => !current);
+                                setSelectedElectiveSlots([]);
+                              }}
+                              className={`w-full sm:w-auto px-4 py-2 border rounded-lg text-sm font-medium transition-colors ${
+                                specializationSelectMode
+                                  ? 'border-amber-400 bg-amber-50 text-amber-800'
+                                  : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              {specializationSelectMode ? 'Selection Mode On' : 'Select Electives'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={addSelectedToSpecializationBlock}
+                              disabled={selectedElectiveSlots.length === 0}
+                              className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Convert to SPEC (Elective)
+                            </button>
+                          </>
                         )}
                         <button
                           type="button"
@@ -799,7 +842,7 @@ export function ProgramDetailView(props) {
                         {Array.from({ length: 6 }).map((_, i) => {
                           const course = sem.courses[i];
                           const slotKey = `${sem.id}:${i}`;
-                          const isElectiveSelected = selectedElectiveSlots.includes(slotKey);
+                          const isElectiveSelected = selectedElectiveSlotSet.has(slotKey);
                           return (
                             <div 
                               key={`${sem.id}_${i}`}
@@ -813,23 +856,25 @@ export function ProgramDetailView(props) {
                                   );
                                 }
                               }}
-                              className={`h-24 rounded-lg relative transition-all cursor-pointer ${selectedSlot?.semesterId === sem.id && selectedSlot?.index === i ? 'ring-2 ring-indigo-500' : ''} ${isElectiveSelected ? 'ring-2 ring-amber-500' : ''} ${course ? `${course.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'}`}
+                              className={`h-24 rounded-lg relative transition-colors cursor-pointer ${selectedSlot?.semesterId === sem.id && selectedSlot?.index === i ? 'ring-2 ring-indigo-500' : ''} ${isElectiveSelected ? 'ring-2 ring-amber-500' : ''} ${
+                                course
+                                  ? isLockedCoreCourse(course)
+                                    ? `${course.color || 'bg-slate-200'} shadow-sm border border-slate-400/60`
+                                    : `${course.color || 'bg-slate-200'} shadow-sm`
+                                  : 'bg-slate-50 border border-dashed border-slate-300'
+                              }`}
                               onDragOver={(e) => { e.preventDefault(); }}
                               onDrop={(e) => {
                                 e.preventDefault();
-                                try {
-                                  const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                                  if (data.type === 'course') {
-                                     const sourceSemId = data.semesterId;
-                                     const sourceIndex = data.courseIndex;
-                                     
-                                     if(sourceSemId === sem.id && sourceIndex === i) return;
-                                     if (isLockedCoreCourse(course)) return;
+                                const data = getDragPayload(e);
+                                if (data?.type === 'course') {
+                                  const sourceSemId = data.semesterId;
+                                  const sourceIndex = data.courseIndex;
+                                  
+                                  if(sourceSemId === sem.id && sourceIndex === i) return;
+                                  if (isLockedCoreCourse(course)) return;
 
-                                     moveCourse(selectedProgram.id, sourceSemId, sourceIndex, sem.id, i);
-                                  }
-                                } catch (err) {
-                                  console.error("Failed to parse drag data", err);
+                                  moveCourse(selectedProgram.id, sourceSemId, sourceIndex, sem.id, i);
                                 }
                               }}
                             >
@@ -841,14 +886,22 @@ export function ProgramDetailView(props) {
                                       e.preventDefault();
                                       return;
                                     }
-                                    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'course', semesterId: sem.id, courseIndex: i }));
+                                    setDragPayload(e, { type: 'course', semesterId: sem.id, courseIndex: i });
                                   }}
                                   className={`w-full h-full flex flex-col items-center justify-center relative group ${isLockedCoreCourse(course) ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}
                                 >
+                                  {isLockedCoreCourse(course) && (
+                                    <>
+                                      <div className="absolute inset-0 rounded-lg bg-slate-100/45 pointer-events-none" />
+                                      <div className="absolute top-1 right-1 p-1 rounded bg-white/70 text-slate-700 pointer-events-none">
+                                        <Lock size={12} />
+                                      </div>
+                                    </>
+                                  )}
                                   {!isLockedCoreCourse(course) && (
                                     <button
                                        onClick={(e) => { e.stopPropagation(); removeCourse(selectedProgram.id, sem.id, i); }}
-                                       className="absolute top-1 right-1 p-1 text-black/40 hover:text-black hover:bg-white/50 rounded transition-all opacity-0 group-hover:opacity-100"
+                                       className="absolute top-1 right-1 p-1 text-black/40 hover:text-black hover:bg-white/50 rounded transition-opacity opacity-0 group-hover:opacity-100"
                                        title="Remove course"
                                     >
                                       <X size={14} />
@@ -857,18 +910,26 @@ export function ProgramDetailView(props) {
                                   <div className="absolute top-1.5 left-1.5 text-[10px] font-bold text-black/50 bg-white/40 px-1.5 py-0.5 rounded shadow-sm">
                                       {course.credits !== undefined ? course.credits : 3}cr
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (isLockedCoreCourse(course)) return;
-                                      toggleCoreCourse(selectedProgram.id, sem.id, i);
-                                    }}
-                                    className={`absolute bottom-1 right-1 text-[10px] px-1.5 py-0.5 rounded border ${course.isCore ? 'bg-indigo-700 text-white border-indigo-700' : 'bg-white/70 text-slate-700 border-white/80'}`}
-                                    title={course.isCore ? 'Core course' : 'Mark as core'}
-                                  >
-                                    CORE
-                                  </button>
+                                  {selectedProgram.type !== 'Specialization' && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (isLockedCoreCourse(course)) return;
+                                        toggleCoreCourse(selectedProgram.id, sem.id, i);
+                                      }}
+                                      className={`absolute bottom-1 right-1 text-[10px] px-1.5 py-0.5 rounded border ${
+                                        isLockedCoreCourse(course)
+                                          ? 'bg-slate-700 text-white border-slate-700'
+                                          : course.isCore
+                                            ? 'bg-indigo-700 text-white border-indigo-700'
+                                            : 'bg-white/70 text-slate-700 border-white/80'
+                                      }`}
+                                      title={isLockedCoreCourse(course) ? 'Locked core course' : course.isCore ? 'Core course' : 'Mark as core'}
+                                    >
+                                      CORE
+                                    </button>
+                                  )}
                                   <div className="text-xs font-bold text-slate-900 mb-0.5 mt-3">{course.code}</div>
                                   <div className="text-[10px] leading-tight text-slate-800 text-center px-2 line-clamp-3 font-medium">{course.title}</div>
                                 </div>
@@ -909,6 +970,14 @@ export function ProgramDetailView(props) {
                           <div className="flex justify-between">
                             <span className="text-slate-600">SPEC in Map</span>
                             <span className="font-semibold">{specializationElectiveCount} courses / {specializationElectiveCredits} cr</span>
+                          </div>
+                        )}
+                        {selectedProgram.type === 'Specialization' && (
+                          <div className="pt-2 border-t border-slate-200">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Legend</p>
+                            <p className="text-[11px] text-slate-500">
+                              Muted course tiles with a lock icon are locked core and cannot be edited or moved in specializations.
+                            </p>
                           </div>
                         )}
                         <div className="pt-2 border-t border-slate-200">
@@ -976,14 +1045,6 @@ export function ProgramDetailView(props) {
                           onChange={(e) => setNewBlockChooseCount(Number(e.target.value) || 1)}
                           className="w-20 px-2 py-1 border border-slate-300 rounded text-sm"
                         />
-                        <button
-                          type="button"
-                          onClick={addSelectedToSpecializationBlock}
-                          disabled={selectedElectiveSlots.length === 0}
-                          className="px-3 py-1.5 bg-indigo-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Create Row from Selection
-                        </button>
                       </div>
                     </div>
                     {specializationBlocks.length === 0 ? (
@@ -1030,29 +1091,22 @@ export function ProgramDetailView(props) {
                                 return (
                                   <div
                                     key={`${block.id}_${i}`}
-                                    className={`h-20 rounded-lg relative transition-all ${rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'}`}
+                                    className={`h-20 rounded-lg relative transition-colors ${rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'}`}
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => {
                                       e.preventDefault();
-                                      try {
-                                        const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                                        if (data.type === 'spec-course') {
-                                          moveCourseAcrossSpecializationBlocks(data.blockId, data.courseIndex, block.id, i);
-                                        }
-                                      } catch (error) {
-                                        console.error('Failed to move specialization course', error);
+                                      const data = getDragPayload(e);
+                                      if (data?.type === 'spec-course') {
+                                        moveCourseAcrossSpecializationBlocks(data.blockId, data.courseIndex, block.id, i);
                                       }
                                     }}
                                   >
                                     {rowCourse ? (
                                       <div
                                         draggable
-                                        onDragStart={(e) =>
-                                          e.dataTransfer.setData(
-                                            'application/json',
-                                            JSON.stringify({ type: 'spec-course', blockId: block.id, courseIndex: i })
-                                          )
-                                        }
+                                        onDragStart={(e) => {
+                                          setDragPayload(e, { type: 'spec-course', blockId: block.id, courseIndex: i });
+                                        }}
                                         className="w-full h-full px-2 py-1 flex flex-col justify-center items-center relative cursor-grab active:cursor-grabbing"
                                       >
                                         <button
@@ -1154,39 +1208,32 @@ export function ProgramDetailView(props) {
                                         return (
                                           <div
                                             key={`${row.id}_${i}`}
-                                            className={`h-20 rounded-lg relative transition-all ${rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'}`}
+                                            className={`h-20 rounded-lg relative transition-colors ${rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'}`}
                                             onDragOver={(e) => e.preventDefault()}
                                             onDrop={(e) => {
                                               e.preventDefault();
-                                              try {
-                                                const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                                                if (data.type === 'elective-suggestion-course') {
-                                                  moveCourseAcrossElectiveSuggestionRows(
-                                                    electiveType,
-                                                    data.rowId,
-                                                    data.courseIndex,
-                                                    row.id,
-                                                    i
-                                                  );
-                                                }
-                                              } catch (error) {
-                                                console.error('Failed to move elective suggestion course', error);
+                                              const data = getDragPayload(e);
+                                              if (data?.type === 'elective-suggestion-course') {
+                                                moveCourseAcrossElectiveSuggestionRows(
+                                                  electiveType,
+                                                  data.rowId,
+                                                  data.courseIndex,
+                                                  row.id,
+                                                  i
+                                                );
                                               }
                                             }}
                                           >
                                             {rowCourse ? (
                                               <div
                                                 draggable
-                                                onDragStart={(e) =>
-                                                  e.dataTransfer.setData(
-                                                    'application/json',
-                                                    JSON.stringify({
-                                                      type: 'elective-suggestion-course',
-                                                      rowId: row.id,
-                                                      courseIndex: i
-                                                    })
-                                                  )
-                                                }
+                                                onDragStart={(e) => {
+                                                  setDragPayload(e, {
+                                                    type: 'elective-suggestion-course',
+                                                    rowId: row.id,
+                                                    courseIndex: i
+                                                  });
+                                                }}
                                                 className="w-full h-full px-2 py-1 flex flex-col justify-center items-center relative cursor-grab active:cursor-grabbing"
                                               >
                                                 <button
@@ -1267,15 +1314,49 @@ export function ProgramDetailView(props) {
                               onChange={(e) => setCourseSearchTerm(e.target.value)}
                             />
                           </div>
+                          <div className="flex flex-col gap-2">
+                            <select
+                              value={modalDisciplineFilter}
+                              onChange={(e) => setModalDisciplineFilter(e.target.value)}
+                              className="px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                            >
+                              {modalDisciplineOptions.map((discipline) => (
+                                <option key={discipline} value={discipline}>
+                                  {discipline}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="flex flex-wrap gap-2">
+                              {modalDisciplineOptions.map((discipline) => (
+                                <button
+                                  key={discipline}
+                                  type="button"
+                                  onClick={() => setModalDisciplineFilter(discipline)}
+                                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+                                    modalDisciplineFilter === discipline
+                                      ? 'bg-indigo-600 text-white border-indigo-600'
+                                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {discipline}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
 
                           <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto bg-white shadow-inner">
                             {(() => {
+                              const normalizedTerm = courseSearchTerm.toLowerCase();
                               const filteredCourses = courseSearchTerm.trim() === '' 
-                                ? globalCourses 
+                                ? globalCourses.filter((c) => {
+                                    const discipline = c.discipline || 'Uncategorized';
+                                    return modalDisciplineFilter === 'All' || discipline === modalDisciplineFilter;
+                                  })
                                 : globalCourses.filter(c => 
-                                    c.code.toLowerCase().includes(courseSearchTerm.toLowerCase()) || 
-                                    c.title.toLowerCase().includes(courseSearchTerm.toLowerCase()) ||
-                                    (c.discipline && c.discipline.toLowerCase().includes(courseSearchTerm.toLowerCase()))
+                                    (c.code.toLowerCase().includes(normalizedTerm) || 
+                                    c.title.toLowerCase().includes(normalizedTerm) ||
+                                    (c.discipline && c.discipline.toLowerCase().includes(normalizedTerm))) &&
+                                    (modalDisciplineFilter === 'All' || (c.discipline || 'Uncategorized') === modalDisciplineFilter)
                                   );
 
                               return filteredCourses.length > 0 ? (

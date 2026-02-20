@@ -116,6 +116,7 @@ export const createGlobalCourseFromForm = (formData, colors) => ({
   id: `c_${Date.now()}`,
   code: formData.get('code'),
   title: formData.get('title'),
+  discipline: formData.get('discipline') ? String(formData.get('discipline')).trim() : undefined,
   credits: Number(formData.get('credits') || 3),
   color: colors[Math.floor(Math.random() * colors.length)]
 });
