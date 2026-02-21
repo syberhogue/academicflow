@@ -1,3 +1,8 @@
+import { getDefaultProgramColor } from './data';
+import { createDefaultProgramInfo } from './programInfo';
+
+const DEFAULT_MAP_COLUMNS = 5;
+
 export const createProgramFromForm = (formData, existingPrograms = []) => {
   const timestamp = Date.now();
   const type = formData.get('type');
@@ -32,7 +37,8 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
       name: `Specialization Row ${index + 1}`,
       rowType: 'required',
       chooseCount: 1,
-      courses: Array.from({ length: 6 }).map(() => null)
+      columnCount: DEFAULT_MAP_COLUMNS,
+      courses: Array.from({ length: DEFAULT_MAP_COLUMNS }).map(() => null)
     }));
 
   const buildSemesters = () => {
@@ -106,9 +112,12 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
     ],
     semesters: buildSemesters(),
     reviews: [],
+    mapColumns: DEFAULT_MAP_COLUMNS,
+    programInfo: !parentProgram ? createDefaultProgramInfo({ name: formData.get('name'), lead: formData.get('lead') }) : null,
     specializationBlocks: isSpecialization ? createDefaultSpecializationRows() : [],
     electiveSuggestionMaps: {},
-    facultyMembers: [{ id: `f_${timestamp}`, name: formData.get('lead'), role: 'Program Lead' }]
+    facultyMembers: [{ id: `f_${timestamp}`, name: formData.get('lead'), role: 'Program Lead' }],
+    color: getDefaultProgramColor(type, !!parentProgram)
   };
 };
 
@@ -118,7 +127,7 @@ export const createGlobalCourseFromForm = (formData, colors) => ({
   title: formData.get('title'),
   discipline: formData.get('discipline') ? String(formData.get('discipline')).trim() : undefined,
   credits: Number(formData.get('credits') || 3),
-  color: colors[Math.floor(Math.random() * colors.length)]
+  color: formData.get('color') ? String(formData.get('color')) : colors[Math.floor(Math.random() * colors.length)]
 });
 
 export const insertCourseInProgram = (programs, progId, semesterId, index, course) =>

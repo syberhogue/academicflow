@@ -1,7 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeft, BookOpen, Check, Clock, FileText, Lock, Plus, Search, Users, X } from 'lucide-react';
-import { PROGRAM_TYPES } from '../data';
+import { PROGRAM_COLOR_PRESETS, PROGRAM_TYPES } from '../data';
+import { ProgramInfoTab } from './ProgramInfoTab';
 import { Badge, Card, ProgressBar } from '../ui';
+
+const DEFAULT_MAP_COLUMNS = 5;
+const MAX_MAP_COLUMNS = 6;
 
 export function ProgramDetailView(props) {
   const {
@@ -22,12 +26,16 @@ export function ProgramDetailView(props) {
     handleCloseModal,
     moveCourse,
     onSaveMap,
+    onExportProgram,
     mapLastSavedAt,
     onCreateDerivedProgram,
     onDuplicateSpecialization,
     toggleCoreCourse,
     updateSpecializationBlocks,
     updateProgramName,
+    updateProgramInfo,
+    updateProgramColor,
+    addProgramMapColumn,
     updateElectiveSuggestionMaps
   } = props;
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -220,6 +228,43 @@ export function ProgramDetailView(props) {
     return ['All', ...Array.from(unique).sort((a, b) => a.localeCompare(b))];
   }, [globalCourses]);
   const selectedElectiveSlotSet = useMemo(() => new Set(selectedElectiveSlots), [selectedElectiveSlots]);
+  const selectedProgramColor = selectedProgram?.color || (selectedProgram?.parentProgramId || selectedProgram?.parentProgram ? '#ede9fe' : '#dbeafe');
+  const isBaseProgram = !selectedProgram?.parentProgramId && !selectedProgram?.parentProgram;
+  const getOccupiedColumns = (courses = []) => {
+    let occupied = 0;
+    courses.forEach((course, index) => {
+      if (course) {
+        occupied = Math.max(occupied, index + 1);
+      }
+    });
+    return occupied;
+  };
+  const mapColumnCount = useMemo(() => {
+    const inferred = selectedProgram?.semesters?.reduce(
+      (max, semester) => Math.max(max, getOccupiedColumns(semester.courses || [])),
+      0
+    ) || 0;
+    const explicit = Number(selectedProgram?.mapColumns) || 0;
+    return Math.min(MAX_MAP_COLUMNS, Math.max(DEFAULT_MAP_COLUMNS, inferred, explicit));
+  }, [selectedProgram]);
+  const specializationColumnCount = useMemo(() => {
+    const occupied = specializationBlocks.reduce(
+      (max, block) => Math.max(max, getOccupiedColumns(block.courses || [])),
+      0
+    );
+    const explicit = specializationBlocks.reduce(
+      (max, block) => Math.max(max, Number(block.columnCount) || 0),
+      0
+    );
+    return Math.min(MAX_MAP_COLUMNS, Math.max(DEFAULT_MAP_COLUMNS, occupied, explicit));
+  }, [specializationBlocks]);
+
+  const getElectiveSuggestionColumnCount = (electiveType) => {
+    const rows = electiveSuggestionMaps[electiveType] || [];
+    const occupied = rows.reduce((max, row) => Math.max(max, getOccupiedColumns(row.courses || [])), 0);
+    const explicit = rows.reduce((max, row) => Math.max(max, Number(row.columnCount) || 0), 0);
+    return Math.min(MAX_MAP_COLUMNS, Math.max(DEFAULT_MAP_COLUMNS, occupied, explicit));
+  };
 
   const setDragPayload = (event, payload) => {
     const serialized = JSON.stringify(payload);
@@ -351,7 +396,8 @@ export function ProgramDetailView(props) {
       name: `Specialization Row ${specializationBlocks.length + 1}`,
       rowType: 'choose',
       chooseCount: Math.max(1, Math.min(Number(newBlockChooseCount) || 1, selectedCourses.length)),
-      courses: Array.from({ length: 6 }).map((_, i) => selectedCourses[i] || null)
+      columnCount: specializationColumnCount,
+      courses: Array.from({ length: specializationColumnCount }).map((_, i) => selectedCourses[i] || null)
     };
 
     selectedElectiveSlots.forEach((slotKey) => {
@@ -405,6 +451,7 @@ export function ProgramDetailView(props) {
   };
 
   const addEmptyElectiveSuggestionRow = (electiveType) => {
+    const columnCount = getElectiveSuggestionColumnCount(electiveType);
     withUpdatedElectiveRows(electiveType, (rows) => [
       ...rows,
       {
@@ -412,7 +459,8 @@ export function ProgramDetailView(props) {
         name: `${electiveType} Row ${rows.length + 1}`,
         rowType: 'required',
         chooseCount: 1,
-        courses: Array.from({ length: 6 }).map(() => null)
+        columnCount,
+        courses: Array.from({ length: columnCount }).map(() => null)
       }
     ]);
   };
@@ -487,9 +535,41 @@ export function ProgramDetailView(props) {
       name: `Specialization Row ${specializationBlocks.length + 1}`,
       rowType: 'required',
       chooseCount: 1,
-      courses: Array.from({ length: 6 }).map(() => null)
+      columnCount: specializationColumnCount,
+      courses: Array.from({ length: specializationColumnCount }).map(() => null)
     };
     updateSpecializationBlocks(selectedProgram.id, [...specializationBlocks, newRow]);
+  };
+
+  const addSpecializationColumn = () => {
+    if (specializationColumnCount >= MAX_MAP_COLUMNS) {
+      return;
+    }
+    const nextColumnCount = specializationColumnCount + 1;
+    const nextBlocks = specializationBlocks.map((block) => {
+      const nextCourses = [...(block.courses || [])];
+      while (nextCourses.length < nextColumnCount) {
+        nextCourses.push(null);
+      }
+      return { ...block, courses: nextCourses, columnCount: nextColumnCount };
+    });
+    updateSpecializationBlocks(selectedProgram.id, nextBlocks);
+  };
+
+  const addElectiveSuggestionColumn = (electiveType) => {
+    const currentColumnCount = getElectiveSuggestionColumnCount(electiveType);
+    if (currentColumnCount >= MAX_MAP_COLUMNS) {
+      return;
+    }
+    withUpdatedElectiveRows(electiveType, (rows) =>
+      rows.map((row) => {
+        const nextCourses = [...(row.courses || [])];
+        while (nextCourses.length < currentColumnCount + 1) {
+          nextCourses.push(null);
+        }
+        return { ...row, courses: nextCourses, columnCount: currentColumnCount + 1 };
+      })
+    );
   };
 
   const applyCourseFromModal = (course) => {
@@ -523,6 +603,12 @@ export function ProgramDetailView(props) {
     setIsEditingProgramName(false);
     setEditedProgramName(selectedProgram?.name || '');
   }, [selectedProgram?.id, selectedProgram?.name]);
+
+  useEffect(() => {
+    if (!isBaseProgram && activeTab === 'programInfo') {
+      setActiveTab('overview');
+    }
+  }, [activeTab, isBaseProgram, setActiveTab]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -646,7 +732,11 @@ export function ProgramDetailView(props) {
             <Badge type={selectedProgram.status === 'Drafting' ? 'draft' : selectedProgram.status === 'In Review' ? 'warning' : 'success'}>
               {selectedProgram.status}
             </Badge>
-            <button className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 text-sm font-medium transition-colors shadow-sm">
+            <button
+              type="button"
+              onClick={() => onExportProgram(selectedProgram.id)}
+              className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 text-sm font-medium transition-colors shadow-sm"
+            >
               Export PDF
             </button>
           </div>
@@ -655,6 +745,7 @@ export function ProgramDetailView(props) {
         <div className="flex border-b border-slate-200 overflow-x-auto no-scrollbar">
           {[
             { id: 'overview', icon: FileText, label: 'Overview & Milestones' },
+            ...(isBaseProgram ? [{ id: 'programInfo', icon: FileText, label: 'Program Info' }] : []),
             { id: 'map', icon: BookOpen, label: 'Curriculum Map' },
             { id: 'reviews', icon: AlertCircle, label: 'Feedback & Reviews' },
             { id: 'faculty', icon: Users, label: 'Assigned Faculty' }
@@ -728,8 +819,50 @@ export function ProgramDetailView(props) {
                     </div>
                   </div>
                 </Card>
+                <Card className="p-6">
+                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4">Program Color</h3>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div
+                      className="w-10 h-10 rounded-lg border border-slate-300 shadow-sm"
+                      style={{ backgroundColor: selectedProgramColor }}
+                    />
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Tree Row Swatch</div>
+                      <div className="text-xs text-slate-500">{selectedProgramColor}</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-5 gap-2 mb-3">
+                    {PROGRAM_COLOR_PRESETS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => updateProgramColor(selectedProgram.id, color)}
+                        className={`h-8 rounded-md border ${selectedProgramColor === color ? 'ring-2 ring-indigo-500 border-indigo-500' : 'border-slate-300 hover:border-slate-400'}`}
+                        style={{ backgroundColor: color }}
+                        title={`Set program color to ${color}`}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={selectedProgramColor}
+                      onChange={(event) => updateProgramColor(selectedProgram.id, event.target.value)}
+                      className="h-9 w-14 p-1 border border-slate-300 rounded bg-white"
+                    />
+                    <span className="text-xs text-slate-500">Choose custom color</span>
+                  </div>
+                </Card>
               </div>
             </div>
+          )}
+
+          {activeTab === 'programInfo' && isBaseProgram && (
+            <ProgramInfoTab
+              selectedProgram={selectedProgram}
+              updateProgramInfo={updateProgramInfo}
+              onExportProgram={onExportProgram}
+            />
           )}
 
           {activeTab === 'map' && (() => {
@@ -749,7 +882,7 @@ export function ProgramDetailView(props) {
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                    <div>
                      <h2 className="text-lg font-bold text-slate-900 mb-1">Curriculum Map</h2>
-                     <p className="text-sm font-medium text-slate-500">Maximum 6 courses per term. Drag and drop to reorganize.</p>
+                     <p className="text-sm font-medium text-slate-500">Default 5 courses per term. Add a 6th column if needed.</p>
                    </div>
                    <div className="flex flex-col sm:flex-row items-center gap-6 w-full md:w-auto">
                      <div className="flex-1 w-full sm:w-48">
@@ -767,6 +900,14 @@ export function ProgramDetailView(props) {
                          <ProgressBar percentage={courseProgress} height="h-2" color={currentCourses >= targetCourses ? 'bg-emerald-500' : 'bg-indigo-500'} />
                       </div>
                       <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => addProgramMapColumn(selectedProgram.id)}
+                          disabled={mapColumnCount >= MAX_MAP_COLUMNS}
+                          className="w-full sm:w-auto px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          + Column
+                        </button>
                         {selectedProgram.type === 'Specialization' && (
                           <>
                             <button
@@ -838,8 +979,11 @@ export function ProgramDetailView(props) {
                       <div className="w-full md:w-40 flex-shrink-0 p-4 bg-slate-50 flex items-center border-b md:border-b-0 md:border-r border-slate-200">
                         <span className="font-bold text-sm text-slate-700 uppercase tracking-wide">{sem.name}</span>
                       </div>
-                      <div className="flex-1 p-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                        {Array.from({ length: 6 }).map((_, i) => {
+                      <div
+                        className="flex-1 p-2 grid gap-2"
+                        style={{ gridTemplateColumns: `repeat(${mapColumnCount}, minmax(0, 1fr))` }}
+                      >
+                        {Array.from({ length: mapColumnCount }).map((_, i) => {
                           const course = sem.courses[i];
                           const slotKey = `${sem.id}:${i}`;
                           const isElectiveSelected = selectedElectiveSlotSet.has(slotKey);
@@ -1038,6 +1182,14 @@ export function ProgramDetailView(props) {
                         >
                           + Row
                         </button>
+                        <button
+                          type="button"
+                          onClick={addSpecializationColumn}
+                          disabled={specializationColumnCount >= MAX_MAP_COLUMNS || specializationBlocks.length === 0}
+                          className="px-3 py-1.5 border border-slate-300 text-slate-700 rounded text-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          + Column
+                        </button>
                         <input
                           type="number"
                           min={1}
@@ -1085,8 +1237,11 @@ export function ProgramDetailView(props) {
                                 </button>
                               </div>
                             </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                              {Array.from({ length: 6 }).map((_, i) => {
+                            <div
+                              className="grid gap-2"
+                              style={{ gridTemplateColumns: `repeat(${specializationColumnCount}, minmax(0, 1fr))` }}
+                            >
+                              {Array.from({ length: specializationColumnCount }).map((_, i) => {
                                 const rowCourse = block.courses?.[i] || null;
                                 return (
                                   <div
@@ -1152,17 +1307,28 @@ export function ProgramDetailView(props) {
                     <div className="space-y-4">
                       {electiveTypesInMap.map((electiveType) => {
                         const rows = electiveSuggestionMaps[electiveType] || [];
+                        const suggestionColumnCount = getElectiveSuggestionColumnCount(electiveType);
                         return (
                           <div key={electiveType} className="border border-slate-200 rounded-lg p-3">
                             <div className="flex items-center justify-between mb-3">
                               <div className="text-sm font-semibold text-slate-800">{electiveType}</div>
-                              <button
-                                type="button"
-                                onClick={() => addEmptyElectiveSuggestionRow(electiveType)}
-                                className="px-2.5 py-1 border border-slate-300 rounded text-xs text-slate-700 hover:bg-slate-50"
-                              >
-                                + Row
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => addEmptyElectiveSuggestionRow(electiveType)}
+                                  className="px-2.5 py-1 border border-slate-300 rounded text-xs text-slate-700 hover:bg-slate-50"
+                                >
+                                  + Row
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => addElectiveSuggestionColumn(electiveType)}
+                                  disabled={suggestionColumnCount >= MAX_MAP_COLUMNS || rows.length === 0}
+                                  className="px-2.5 py-1 border border-slate-300 rounded text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  + Column
+                                </button>
+                              </div>
                             </div>
                             {rows.length === 0 ? (
                               <p className="text-xs text-slate-500">No suggestion rows yet for this elective type.</p>
@@ -1202,8 +1368,11 @@ export function ProgramDetailView(props) {
                                         </button>
                                       </div>
                                     </div>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                                      {Array.from({ length: 6 }).map((_, i) => {
+                                    <div
+                                      className="grid gap-2"
+                                      style={{ gridTemplateColumns: `repeat(${suggestionColumnCount}, minmax(0, 1fr))` }}
+                                    >
+                                      {Array.from({ length: suggestionColumnCount }).map((_, i) => {
                                         const rowCourse = row.courses?.[i] || null;
                                         return (
                                           <div

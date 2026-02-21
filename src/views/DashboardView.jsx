@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { BookOpen, Activity, CheckCircle2, Plus, Building, LayoutGrid, Network, ChevronRight, ChevronDown } from 'lucide-react';
+import { BookOpen, Activity, CheckCircle2, Plus, Building, LayoutGrid, Network, ChevronRight, ChevronDown, Star, Trash2 } from 'lucide-react';
 import { Badge, Card, ProgressBar } from '../ui';
 
-  export function DashboardView({ programs, onCreateProgram, onOpenProgram }) {
+  export function DashboardView({ programs, onCreateProgram, onOpenProgram, onToggleFavorite, onDeleteProgram }) {
   const [viewMode, setViewMode] = useState('tree');
   const [collapsedById, setCollapsedById] = useState({});
 
@@ -38,17 +38,34 @@ import { Badge, Card, ProgressBar } from '../ui';
     return { rootPrograms: roots, childrenByParent: childMap };
   }, [programs]);
 
+  const hasParentProgram = (program) => !!(program.parentProgramId || program.parentProgram);
+  const getProgramColor = (program) => program.color || (hasParentProgram(program) ? '#ede9fe' : '#dbeafe');
+  const getDerivedCounts = (programId) => {
+    const queue = [...(childrenByParent.get(programId) || [])];
+    let specializationCount = 0;
+    let minorCount = 0;
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (current.type === 'Specialization') specializationCount += 1;
+      if (current.type === 'Minor') minorCount += 1;
+      const nested = childrenByParent.get(current.id) || [];
+      nested.forEach((child) => queue.push(child));
+    }
+
+    return { specializationCount, minorCount };
+  };
+
   const renderTreeNode = (program) => {
     const children = childrenByParent.get(program.id) || [];
     const isCollapsed = !!collapsedById[program.id];
-    const completedMilestones = program.milestones.filter((m) => m.completed).length;
-    const totalMilestones = program.milestones.length || 1;
-    const progress = Math.round((completedMilestones / totalMilestones) * 100);
+    const isDerivedProgram = hasParentProgram(program);
+    const derivedCounts = !isDerivedProgram ? getDerivedCounts(program.id) : null;
 
     return (
       <div key={program.id} className="relative">
-        <div className="relative pl-6">
-          <div className="absolute left-0 top-7 w-4 border-t border-slate-300" />
+        <div className="relative pl-5">
+          <div className="absolute left-0 top-5 w-3 border-t border-slate-300" />
           {children.length > 0 && (
             <button
               type="button"
@@ -58,28 +75,57 @@ import { Badge, Card, ProgressBar } from '../ui';
                   [program.id]: !current[program.id]
                 }))
               }
-              className="absolute left-0 top-2 p-1 rounded hover:bg-slate-100 text-slate-500"
+              className="absolute left-0 top-2 p-0.5 rounded hover:bg-slate-100 text-slate-500"
               title={isCollapsed ? 'Expand branch' : 'Collapse branch'}
             >
               {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
             </button>
           )}
-          <Card className="p-4 hover:border-indigo-300 transition-colors cursor-pointer" >
-            <button type="button" onClick={() => onOpenProgram(program.id)} className="w-full text-left">
-              <div className="flex justify-between items-start gap-2 mb-2">
-                <div>
-                  <div className="font-bold text-slate-900">{program.name}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{program.type}</div>
+          <Card
+            className={`px-3 py-2 hover:border-indigo-300 transition-colors ${isDerivedProgram ? 'border-violet-300' : 'border-blue-300'}`}
+            style={{ backgroundColor: getProgramColor(program) }}
+          >
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => onOpenProgram(program.id)} className="flex-1 min-w-0 text-left">
+                <div className="flex items-center gap-2">
+                  <div className="font-bold text-slate-900 text-sm truncate">{program.name}</div>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide font-semibold ${isDerivedProgram ? 'bg-violet-100 text-violet-700 border border-violet-200' : 'bg-blue-100 text-blue-700 border border-blue-200'}`}>
+                    {isDerivedProgram ? 'Derived' : 'Base'}
+                  </span>
+                  {!isDerivedProgram && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-white/70 text-slate-700">
+                      {derivedCounts.specializationCount} spec • {derivedCounts.minorCount} minor
+                    </span>
+                  )}
                 </div>
-                <Badge type={program.status === 'Drafting' ? 'draft' : program.status === 'In Review' ? 'warning' : 'success'}>
-                  {program.status}
-                </Badge>
-              </div>
-              <div className="text-xs text-slate-500 mb-2 flex items-center gap-1">
-                <Building size={12} /> {program.faculty}
-              </div>
-              <ProgressBar percentage={progress} />
-            </button>
+                <div className="text-[11px] text-slate-600 mt-0.5 truncate">{program.type} • {program.faculty}</div>
+              </button>
+              <Badge type={program.status === 'Drafting' ? 'draft' : program.status === 'In Review' ? 'warning' : 'success'}>
+                {program.status}
+              </Badge>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleFavorite(program.id);
+                }}
+                className={`p-1 rounded ${program.isFavorite ? 'text-amber-500 hover:text-amber-600' : 'text-slate-500 hover:text-amber-500'}`}
+                title={program.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                <Star size={15} fill={program.isFavorite ? 'currentColor' : 'none'} />
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeleteProgram(program.id);
+                }}
+                className="p-1 rounded text-slate-500 hover:text-red-600"
+                title="Delete program"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
           </Card>
         </div>
         {children.length > 0 && !isCollapsed && (
@@ -167,18 +213,44 @@ import { Badge, Card, ProgressBar } from '../ui';
             
             return (
               <Card key={prog.id} className="flex flex-col hover:border-indigo-300 transition-colors cursor-pointer" >
-                <div onClick={() => onOpenProgram(prog.id)} className="p-6 flex-1">
+                <div className="p-6 flex-1">
                   <div className="flex justify-between items-start mb-4">
                     <Badge type={prog.status === 'Drafting' ? 'draft' : prog.status === 'In Review' ? 'warning' : 'success'}>
                       {prog.status}
                     </Badge>
-                    <div className="text-xs font-bold text-slate-400 uppercase">{prog.type.split(' ')[0]}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-bold text-slate-400 uppercase">{prog.type.split(' ')[0]}</div>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onToggleFavorite(prog.id);
+                        }}
+                        className={`p-1 rounded ${prog.isFavorite ? 'text-amber-500 hover:text-amber-600' : 'text-slate-400 hover:text-amber-500'}`}
+                        title={prog.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                      >
+                        <Star size={16} fill={prog.isFavorite ? 'currentColor' : 'none'} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onDeleteProgram(prog.id);
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-red-600"
+                        title="Delete program"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-bold text-slate-900 mb-2">{prog.name}</h3>
-                  <div className="flex items-center gap-2 text-sm text-slate-500 mb-4">
-                    <Building size={14} /> {prog.faculty}
+                  <div onClick={() => onOpenProgram(prog.id)}>
+                    <h3 className="text-lg font-bold text-slate-900 mb-2">{prog.name}</h3>
+                    <div className="flex items-center gap-2 text-sm text-slate-500 mb-4">
+                      <Building size={14} /> {prog.faculty}
+                    </div>
+                    <p className="text-sm text-slate-600 line-clamp-2 mb-6">{prog.description}</p>
                   </div>
-                  <p className="text-sm text-slate-600 line-clamp-2 mb-6">{prog.description}</p>
                 </div>
                 
                 <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">

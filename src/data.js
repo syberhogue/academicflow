@@ -12,10 +12,37 @@ export const PROGRAM_TYPES = [
   { id: 'diploma', name: 'Undergraduate Diploma', minCredits: 18 }
 ];
 
+export const FACULTY_OPTIONS = [
+  { code: 'FBIT', name: 'Faculty of Business & IT' },
+  { code: 'FSCI', name: 'Faculty of Science' },
+  { code: 'FSSH', name: 'Faculty of Social Sciences and Humanities' },
+  { code: 'FEAS', name: 'Faculty of Engineering & Applied Science' },
+  { code: 'FEd', name: 'Faculty of Education' }
+];
+
 export const COURSE_COLORS = [
   'bg-blue-300', 'bg-purple-300', 'bg-pink-300', 'bg-emerald-400', 
   'bg-amber-400', 'bg-sky-300', 'bg-orange-200', 'bg-rose-300', 'bg-teal-300'
 ];
+
+export const PROGRAM_COLOR_PRESETS = [
+  '#dbeafe', // blue
+  '#e0f2fe', // sky
+  '#dcfce7', // green
+  '#fef3c7', // amber
+  '#fde68a', // yellow
+  '#fee2e2', // red
+  '#fce7f3', // pink
+  '#ede9fe', // violet
+  '#e2e8f0' // slate
+];
+
+export const getDefaultProgramColor = (programType, hasParent = false) => {
+  if (hasParent || programType === 'Minor' || programType === 'Specialization') {
+    return '#ede9fe';
+  }
+  return '#dbeafe';
+};
 
 const GAME_CORE_COURSES = [
   { id: 'game_core_001', code: 'INFR 1020U', title: 'Essential Mathematics for Games I', credits: 3, color: 'bg-blue-300' },

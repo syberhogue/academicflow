@@ -22,8 +22,8 @@ export const ProgressBar = ({ percentage, color = 'bg-emerald-500', height = 'h-
   </div>
 );
 
-export const Card = ({ children, className = '' }) => (
-  <div className={`bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden ${className}`}>
+export const Card = ({ children, className = '', ...props }) => (
+  <div className={`bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden ${className}`} {...props}>
     {children}
   </div>
 );

@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { BookOpen, GraduationCap, LayoutDashboard, Menu, Settings, X } from 'lucide-react';
-import { COURSE_COLORS, INITIAL_COURSES, INITIAL_DATA } from './src/data';
+import React, { useEffect, useMemo, useState } from 'react';
+import { BookOpen, GraduationCap, LayoutDashboard, Menu, Settings, Star, X } from 'lucide-react';
+import { COURSE_COLORS, INITIAL_COURSES, INITIAL_DATA, getDefaultProgramColor } from './src/data';
+import { getTodayIsoDate, normalizeProgramInfo } from './src/programInfo';
 import { CreateProgramView } from './src/views/CreateProgramView';
 import { DashboardView } from './src/views/DashboardView';
 import { GlobalCoursesView } from './src/views/GlobalCoursesView';
@@ -15,23 +16,95 @@ import {
 
 const PROGRAMS_STORAGE_KEY = 'academicflow.programs.v1';
 const MAP_SAVED_AT_STORAGE_KEY = 'academicflow.mapSavedAt.v1';
+const FAVORITE_PROGRAM_IDS_STORAGE_KEY = 'academicflow.favoriteProgramIds.v1';
+const COURSE_CATEGORIES_STORAGE_KEY = 'academicflow.courseCategories.v1';
+const DEFAULT_MAP_COLUMNS = 5;
+const MAX_MAP_COLUMNS = 6;
+
+const inferOccupiedMapColumns = (semesters = []) => {
+  let maxOccupied = 0;
+  semesters.forEach((semester) => {
+    (semester.courses || []).forEach((course, index) => {
+      if (course) {
+        maxOccupied = Math.max(maxOccupied, index + 1);
+      }
+    });
+  });
+  return Math.min(MAX_MAP_COLUMNS, Math.max(DEFAULT_MAP_COLUMNS, maxOccupied));
+};
+
+const loadFavoriteProgramIds = () => {
+  try {
+    const storedFavoriteIds = localStorage.getItem(FAVORITE_PROGRAM_IDS_STORAGE_KEY);
+    if (!storedFavoriteIds) {
+      return new Set();
+    }
+    const parsedFavoriteIds = JSON.parse(storedFavoriteIds);
+    if (!Array.isArray(parsedFavoriteIds)) {
+      return new Set();
+    }
+    return new Set(parsedFavoriteIds);
+  } catch (error) {
+    console.error('Failed to load favorite program IDs from localStorage', error);
+    return new Set();
+  }
+};
 
 const loadProgramsFromStorage = () => {
+  const normalizeProgram = (program, favoriteProgramIds) => ({
+    ...program,
+    isFavorite: favoriteProgramIds.has(program.id) || !!program.isFavorite,
+    color: program.color || getDefaultProgramColor(program.type, !!(program.parentProgramId || program.parentProgram)),
+    mapColumns: Math.min(
+      MAX_MAP_COLUMNS,
+      Math.max(DEFAULT_MAP_COLUMNS, Number(program.mapColumns) || inferOccupiedMapColumns(program.semesters || []))
+    ),
+    programInfo:
+      program.parentProgramId || program.parentProgram
+        ? program.programInfo || null
+        : normalizeProgramInfo(program)
+  });
+
   try {
+    const favoriteProgramIds = loadFavoriteProgramIds();
     const storedPrograms = localStorage.getItem(PROGRAMS_STORAGE_KEY);
     if (!storedPrograms) {
-      return INITIAL_DATA;
+      return INITIAL_DATA.map((program) => normalizeProgram(program, favoriteProgramIds));
     }
 
     const parsedPrograms = JSON.parse(storedPrograms);
     if (!Array.isArray(parsedPrograms)) {
-      return INITIAL_DATA;
+      return INITIAL_DATA.map((program) => normalizeProgram(program, favoriteProgramIds));
     }
 
-    return parsedPrograms;
+    return parsedPrograms.map((program) => normalizeProgram(program, favoriteProgramIds));
   } catch (error) {
     console.error('Failed to load saved programs from localStorage', error);
-    return INITIAL_DATA;
+    return INITIAL_DATA.map((program) => ({
+      ...program,
+      color: program.color || getDefaultProgramColor(program.type, !!(program.parentProgramId || program.parentProgram)),
+      mapColumns: inferOccupiedMapColumns(program.semesters || []),
+      programInfo:
+        program.parentProgramId || program.parentProgram
+          ? program.programInfo || null
+          : normalizeProgramInfo(program)
+    }));
+  }
+};
+
+const loadCourseCategoriesFromStorage = () => {
+  try {
+    const stored = localStorage.getItem(COURSE_CATEGORIES_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  } catch (error) {
+    console.error('Failed to load course categories from localStorage', error);
+    return [];
   }
 };
 
@@ -47,6 +120,7 @@ const loadSavedAtFromStorage = () => {
 export default function App() {
   const [programs, setPrograms] = useState(loadProgramsFromStorage);
   const [globalCourses, setGlobalCourses] = useState(INITIAL_COURSES);
+  const [courseCategories, setCourseCategories] = useState(loadCourseCategoriesFromStorage);
   const [mapLastSavedAt, setMapLastSavedAt] = useState(loadSavedAtFromStorage);
   const [createSeed, setCreateSeed] = useState(null);
   const [activeView, setActiveView] = useState('dashboard');
@@ -57,9 +131,49 @@ export default function App() {
   const [courseSearchTerm, setCourseSearchTerm] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  useEffect(() => {
+    try {
+      const favoriteProgramIds = programs
+        .filter((program) => !!program.isFavorite)
+        .map((program) => program.id);
+      localStorage.setItem(FAVORITE_PROGRAM_IDS_STORAGE_KEY, JSON.stringify(favoriteProgramIds));
+    } catch (error) {
+      console.error('Failed to persist favorite program IDs', error);
+    }
+  }, [programs]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COURSE_CATEGORIES_STORAGE_KEY, JSON.stringify(courseCategories));
+    } catch (error) {
+      console.error('Failed to persist course categories', error);
+    }
+  }, [courseCategories]);
+
+  useEffect(() => {
+    const inferred = Array.from(
+      new Set(
+        globalCourses
+          .map((course) => String(course.discipline || '').trim())
+          .filter(Boolean)
+      )
+    );
+    setCourseCategories((current) => {
+      const merged = Array.from(new Set([...current, ...inferred])).sort((a, b) => a.localeCompare(b));
+      if (merged.length === current.length && merged.every((value, index) => value === current[index])) {
+        return current;
+      }
+      return merged;
+    });
+  }, [globalCourses]);
+
   const selectedProgram = useMemo(
     () => programs.find((program) => program.id === selectedProgramId),
     [programs, selectedProgramId]
+  );
+  const favoritePrograms = useMemo(
+    () => programs.filter((program) => !!program.isFavorite).sort((a, b) => a.name.localeCompare(b.name)),
+    [programs]
   );
 
   const navigateTo = (view) => {
@@ -95,7 +209,33 @@ export default function App() {
       ...currentCourses,
       createGlobalCourseFromForm(formData, COURSE_COLORS)
     ]);
+    const discipline = String(formData.get('discipline') || '').trim();
+    if (discipline) {
+      setCourseCategories((current) =>
+        current.includes(discipline) ? current : [...current, discipline].sort((a, b) => a.localeCompare(b))
+      );
+    }
     event.target.reset();
+  };
+
+  const updateGlobalCourse = (courseId, updates) => {
+    setGlobalCourses((currentCourses) =>
+      currentCourses.map((course) => (course.id === courseId ? { ...course, ...updates } : course))
+    );
+    const discipline = String(updates?.discipline || '').trim();
+    if (discipline) {
+      setCourseCategories((current) =>
+        current.includes(discipline) ? current : [...current, discipline].sort((a, b) => a.localeCompare(b))
+      );
+    }
+  };
+
+  const addCourseCategory = (categoryName) => {
+    const normalized = String(categoryName || '').trim();
+    if (!normalized) return;
+    setCourseCategories((current) =>
+      current.includes(normalized) ? current : [...current, normalized].sort((a, b) => a.localeCompare(b))
+    );
   };
 
   const insertCourse = (progId, semesterId, index, course) => {
@@ -175,6 +315,32 @@ export default function App() {
     );
   };
 
+  const updateProgramInfo = (progId, programInfo) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) =>
+        program.id === progId
+          ? {
+              ...program,
+              programInfo
+            }
+          : program
+      )
+    );
+  };
+
+  const updateProgramColor = (progId, color) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) =>
+        program.id === progId
+          ? {
+              ...program,
+              color
+            }
+          : program
+      )
+    );
+  };
+
   const updateElectiveSuggestionMaps = (progId, electiveSuggestionMaps) => {
     setPrograms((currentPrograms) =>
       currentPrograms.map((program) =>
@@ -204,6 +370,28 @@ export default function App() {
     }
   };
 
+  const handleExportProgram = (progId) => {
+    const today = getTodayIsoDate();
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) => {
+        if (program.id !== progId) {
+          return program;
+        }
+        if (!program.programInfo) {
+          return program;
+        }
+        return {
+          ...program,
+          programInfo: {
+            ...program.programInfo,
+            version: Math.max(1, Number(program.programInfo.version) || 1) + 1,
+            date: today
+          }
+        };
+      })
+    );
+  };
+
   const handleCreateDerivedProgram = (derivedType, parentProgram) => {
     setCreateSeed({
       type: derivedType,
@@ -222,11 +410,16 @@ export default function App() {
 
   const handleDuplicateSpecialization = (sourceProgram) => {
     const timestamp = Date.now();
+    const sourceMapColumns = Math.min(
+      MAX_MAP_COLUMNS,
+      Math.max(DEFAULT_MAP_COLUMNS, Number(sourceProgram.mapColumns) || inferOccupiedMapColumns(sourceProgram.semesters || []))
+    );
     const duplicatedProgram = {
       ...sourceProgram,
       id: `prog_${timestamp}`,
       name: `${sourceProgram.name} (Copy)`,
       status: 'Drafting',
+      mapColumns: sourceMapColumns,
       milestones: sourceProgram.milestones.map((milestone, index) => ({
         ...milestone,
         id: `m_${timestamp}_${index + 1}`,
@@ -237,13 +430,119 @@ export default function App() {
       specializationBlocks: (sourceProgram.specializationBlocks || []).map((block, blockIndex) => ({
         ...block,
         id: `spec_block_${timestamp}_${blockIndex + 1}`,
-        courses: Array.from({ length: 6 }).map(() => null)
+        columnCount: Math.min(
+          MAX_MAP_COLUMNS,
+          Math.max(DEFAULT_MAP_COLUMNS, Number(block.columnCount) || DEFAULT_MAP_COLUMNS)
+        ),
+        courses: Array.from({
+          length: Math.min(
+            MAX_MAP_COLUMNS,
+            Math.max(DEFAULT_MAP_COLUMNS, Number(block.columnCount) || DEFAULT_MAP_COLUMNS)
+          )
+        }).map(() => null)
       }))
     };
 
     setPrograms((currentPrograms) => [...currentPrograms, duplicatedProgram]);
     setSelectedProgramId(duplicatedProgram.id);
     setActiveView('detail');
+  };
+
+  const handleOpenProgram = (programId) => {
+    setSelectedProgramId(programId);
+    setActiveView('detail');
+    setMobileMenuOpen(false);
+  };
+
+  const handleToggleFavorite = (programId) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) =>
+        program.id === programId
+          ? {
+              ...program,
+              isFavorite: !program.isFavorite
+            }
+          : program
+      )
+    );
+  };
+
+  const handleDeleteProgram = (programId) => {
+    setPrograms((currentPrograms) => {
+      const nameToId = new Map(currentPrograms.map((program) => [program.name, program.id]));
+      const getParentId = (program) =>
+        program.parentProgramId || (program.parentProgram ? nameToId.get(program.parentProgram) : null) || null;
+      const childrenByParent = new Map();
+
+      currentPrograms.forEach((program) => {
+        const parentId = getParentId(program);
+        if (!parentId) return;
+        const children = childrenByParent.get(parentId) || [];
+        children.push(program.id);
+        childrenByParent.set(parentId, children);
+      });
+
+      const toDelete = new Set([programId]);
+      const queue = [programId];
+      while (queue.length > 0) {
+        const currentId = queue.shift();
+        const children = childrenByParent.get(currentId) || [];
+        children.forEach((childId) => {
+          if (!toDelete.has(childId)) {
+            toDelete.add(childId);
+            queue.push(childId);
+          }
+        });
+      }
+
+      if (
+        !window.confirm(
+          toDelete.size > 1
+            ? `Delete this program and ${toDelete.size - 1} derived program(s)?`
+            : 'Delete this program?'
+        )
+      ) {
+        return currentPrograms;
+      }
+
+      if (selectedProgramId && toDelete.has(selectedProgramId)) {
+        setSelectedProgramId(null);
+        setActiveView('dashboard');
+      }
+
+      return currentPrograms.filter((program) => !toDelete.has(program.id));
+    });
+  };
+
+  const addProgramMapColumn = (programId) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) => {
+        if (program.id !== programId) {
+          return program;
+        }
+
+        const currentColumns = Math.min(
+          MAX_MAP_COLUMNS,
+          Math.max(DEFAULT_MAP_COLUMNS, Number(program.mapColumns) || inferOccupiedMapColumns(program.semesters || []))
+        );
+        const nextColumnCount = Math.min(MAX_MAP_COLUMNS, currentColumns + 1);
+        if (nextColumnCount === currentColumns) {
+          return program;
+        }
+
+        return {
+          ...program,
+          mapColumns: nextColumnCount,
+          semesters: program.semesters.map((semester) => {
+            const nextCourses = [...semester.courses];
+            while (nextCourses.length < nextColumnCount) {
+              nextCourses.push(null);
+            }
+            return { ...semester, courses: nextCourses };
+          })
+        };
+      })
+    );
   };
 
   return (
@@ -282,6 +581,36 @@ export default function App() {
           </nav>
         </div>
 
+        {(activeView === 'dashboard' || activeView === 'detail') && (
+          <div className="px-4 pb-4">
+            <p className="px-4 text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Favorites</p>
+            {favoritePrograms.length === 0 ? (
+              <div className="px-4 py-2 text-xs text-slate-500">
+                No favorites yet.
+              </div>
+            ) : (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {favoritePrograms.map((program) => (
+                  <button
+                    key={program.id}
+                    type="button"
+                    onClick={() => handleOpenProgram(program.id)}
+                    className={`w-full flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-left transition-colors ${
+                      selectedProgramId === program.id && activeView === 'detail'
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    }`}
+                    title={program.name}
+                  >
+                    <Star size={14} className={selectedProgramId === program.id && activeView === 'detail' ? 'text-amber-300' : 'text-amber-400'} fill="currentColor" />
+                    <span className="truncate">{program.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mt-auto p-4">
           <button className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors">
             <Settings size={18} /> Settings
@@ -299,10 +628,9 @@ export default function App() {
               setCreateSeed(null);
               setActiveView('create');
             }}
-            onOpenProgram={(programId) => {
-              setSelectedProgramId(programId);
-              setActiveView('detail');
-            }}
+            onOpenProgram={handleOpenProgram}
+            onToggleFavorite={handleToggleFavorite}
+            onDeleteProgram={handleDeleteProgram}
           />
         )}
         {activeView === 'create' && (
@@ -332,12 +660,16 @@ export default function App() {
             handleCloseModal={handleCloseModal}
             moveCourse={moveCourse}
             onSaveMap={handleSaveCurriculumMap}
+            onExportProgram={handleExportProgram}
             mapLastSavedAt={mapLastSavedAt}
             onCreateDerivedProgram={handleCreateDerivedProgram}
             onDuplicateSpecialization={handleDuplicateSpecialization}
             toggleCoreCourse={toggleCoreCourse}
             updateSpecializationBlocks={updateSpecializationBlocks}
             updateProgramName={updateProgramName}
+            updateProgramInfo={updateProgramInfo}
+            updateProgramColor={updateProgramColor}
+            addProgramMapColumn={addProgramMapColumn}
             updateElectiveSuggestionMaps={updateElectiveSuggestionMaps}
           />
         )}
@@ -345,6 +677,9 @@ export default function App() {
           <GlobalCoursesView
             globalCourses={globalCourses}
             handleAddGlobalCourse={handleAddGlobalCourse}
+            updateGlobalCourse={updateGlobalCourse}
+            courseCategories={courseCategories}
+            addCourseCategory={addCourseCategory}
           />
         )}
       </main>
