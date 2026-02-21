@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeft, BookOpen, Check, Clock, FileText, Lock, Plus, Search, Users, X } from 'lucide-react';
 import { PROGRAM_COLOR_PRESETS, PROGRAM_TYPES } from '../data';
+import { DerivedProgramInfoTab } from './DerivedProgramInfoTab';
 import { ProgramInfoTab } from './ProgramInfoTab';
-import { Badge, Card, ProgressBar } from '../ui';
+import { Badge, Card, ColorSwatchPicker, ProgressBar } from '../ui';
 
 const DEFAULT_MAP_COLUMNS = 5;
 const MAX_MAP_COLUMNS = 6;
 
 export function ProgramDetailView(props) {
   const {
+    programs,
     selectedProgram,
     activeTab,
     setActiveTab,
@@ -31,6 +33,7 @@ export function ProgramDetailView(props) {
     onCreateDerivedProgram,
     onDuplicateSpecialization,
     toggleCoreCourse,
+    toggleNewCourse,
     updateSpecializationBlocks,
     updateProgramName,
     updateProgramInfo,
@@ -46,6 +49,8 @@ export function ProgramDetailView(props) {
   const [modalDisciplineFilter, setModalDisciplineFilter] = useState('All');
   const [isEditingProgramName, setIsEditingProgramName] = useState(false);
   const [editedProgramName, setEditedProgramName] = useState('');
+  const [isEditingProgramShortName, setIsEditingProgramShortName] = useState(false);
+  const [editedProgramShortName, setEditedProgramShortName] = useState('');
   const showCiqePanel =
     selectedProgram?.ciqeTemplateApplied ||
     !!selectedProgram?.ciqeGuidelines ||
@@ -186,6 +191,7 @@ export function ProgramDetailView(props) {
   const ciqeDisplayMinCreditsMet = ciqeMinCredits !== null ? ciqeDisplayCurrentCredits >= ciqeMinCredits : null;
   const ciqeDisplayMaxCreditsMet = ciqeMaxCredits !== null ? ciqeDisplayCurrentCredits <= ciqeMaxCredits : null;
   const ciqeDisplayCoursesMet = ciqeTargetCourses !== null ? ciqeDisplayCurrentCourses >= ciqeTargetCourses : null;
+  const isSpecElectiveCourse = (course) => !!course && (course.code === 'SPEC' || course.isSpecializationPlaceholder);
 
   const isLockedCoreCourse = (course) =>
     !!course && selectedProgram?.type === 'Specialization' && (course.isCore || lockedCoreCourseCodes.includes(course.code));
@@ -219,6 +225,40 @@ export function ProgramDetailView(props) {
       }, {})
     : {};
   const electiveTypesInMap = Object.keys(electiveCreditBreakdown).sort((a, b) => a.localeCompare(b));
+  const curriculumOverviewGroups = useMemo(() => {
+    if (!selectedProgram) return [];
+    const allCourses = selectedProgram.semesters.flatMap((semester) => semester.courses.filter((course) => !!course));
+    const specCourses = allCourses.filter((course) => isSpecElectiveCourse(course));
+    const coreCourses = allCourses.filter((course) => !isSpecElectiveCourse(course) && !getElectiveCategory(course));
+    const electiveGroupsMap = {};
+    allCourses.forEach((course) => {
+      if (isSpecElectiveCourse(course)) return;
+      const category = getElectiveCategory(course);
+      if (!category) return;
+      if (!electiveGroupsMap[category]) {
+        electiveGroupsMap[category] = [];
+      }
+      electiveGroupsMap[category].push(course);
+    });
+    const specSubgroups = specializationBlocks.map((block, blockIndex) => {
+      const isRequiredRow = (block.rowType || 'choose') === 'required';
+      const chooseCount = Math.max(1, Number(block.chooseCount) || 1);
+      return {
+        id: block.id || `spec_subgroup_${blockIndex}`,
+        label: isRequiredRow ? 'Required' : `Choose ${chooseCount} courses from the following`,
+        courses: (block.courses || []).filter((course) => !!course)
+      };
+    });
+
+    const groups = [{ label: 'CORE', courses: coreCourses }];
+    Object.keys(electiveGroupsMap)
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((label) => groups.push({ label, courses: electiveGroupsMap[label] }));
+    if (specCourses.length > 0 || specSubgroups.length > 0) {
+      groups.push({ label: 'SPEC Electives', courses: specCourses, subgroups: specSubgroups });
+    }
+    return groups;
+  }, [selectedProgram, specializationBlocks]);
   const modalDisciplineOptions = useMemo(() => {
     const unique = new Set(
       (globalCourses || [])
@@ -230,6 +270,58 @@ export function ProgramDetailView(props) {
   const selectedElectiveSlotSet = useMemo(() => new Set(selectedElectiveSlots), [selectedElectiveSlots]);
   const selectedProgramColor = selectedProgram?.color || (selectedProgram?.parentProgramId || selectedProgram?.parentProgram ? '#ede9fe' : '#dbeafe');
   const isBaseProgram = !selectedProgram?.parentProgramId && !selectedProgram?.parentProgram;
+  const programById = useMemo(() => new Map((programs || []).map((program) => [program.id, program])), [programs]);
+  const programNameToId = useMemo(() => new Map((programs || []).map((program) => [program.name, program.id])), [programs]);
+
+  const getProgramParentId = (program) =>
+    program?.parentProgramId || (program?.parentProgram ? programNameToId.get(program.parentProgram) : null) || null;
+
+  const baseDerivedPrograms = useMemo(() => {
+    if (!isBaseProgram || !selectedProgram || !programs?.length) {
+      return [];
+    }
+    const childrenByParent = new Map();
+    programs.forEach((program) => {
+      const parentId = getProgramParentId(program);
+      if (!parentId) return;
+      const children = childrenByParent.get(parentId) || [];
+      children.push(program);
+      childrenByParent.set(parentId, children);
+    });
+
+    const derived = [];
+    const queue = [...(childrenByParent.get(selectedProgram.id) || [])];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      derived.push(current);
+      const nested = childrenByParent.get(current.id) || [];
+      nested.forEach((child) => queue.push(child));
+    }
+    return derived.sort((a, b) => a.name.localeCompare(b.name));
+  }, [isBaseProgram, selectedProgram, programs]);
+
+  const connectedParentProgram = useMemo(() => {
+    if (isBaseProgram || !selectedProgram) {
+      return null;
+    }
+    const parentId = getProgramParentId(selectedProgram);
+    if (!parentId) return null;
+    return programById.get(parentId) || null;
+  }, [isBaseProgram, selectedProgram, programById, programNameToId]);
+
+  const openProgramOverview = (programId) => {
+    if (!programId) return;
+    setSelectedProgramId(programId);
+    setActiveTab('overview');
+  };
+  const getProgramShortName = (program) => {
+    if (!program) return '';
+    const raw = program?.programInfo?.programShortName || program?.programInfo?.shortFormName || '';
+    return String(raw).trim();
+  };
+  const getProgramDisplayColor = (program) =>
+    program?.color || (program?.parentProgramId || program?.parentProgram ? '#ede9fe' : '#dbeafe');
+  const selectedProgramShortName = getProgramShortName(selectedProgram);
   const getOccupiedColumns = (courses = []) => {
     let occupied = 0;
     courses.forEach((course, index) => {
@@ -605,10 +697,18 @@ export function ProgramDetailView(props) {
   }, [selectedProgram?.id, selectedProgram?.name]);
 
   useEffect(() => {
-    if (!isBaseProgram && activeTab === 'programInfo') {
-      setActiveTab('overview');
-    }
-  }, [activeTab, isBaseProgram, setActiveTab]);
+    setIsEditingProgramShortName(false);
+    setEditedProgramShortName(getProgramShortName(selectedProgram));
+  }, [selectedProgram?.id, selectedProgram?.programInfo]);
+
+  const saveProgramShortName = () => {
+    const normalized = editedProgramShortName.trim();
+    updateProgramInfo(selectedProgram.id, {
+      ...(selectedProgram.programInfo || {}),
+      programShortName: normalized
+    });
+    setIsEditingProgramShortName(false);
+  };
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -685,24 +785,74 @@ export function ProgramDetailView(props) {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-3">
-                    <h1 className="text-3xl font-bold text-slate-900">{selectedProgram.name}</h1>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditedProgramName(selectedProgram.name);
-                        setIsEditingProgramName(true);
-                      }}
-                      className="px-2.5 py-1 border border-slate-300 rounded text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      Edit Name
-                    </button>
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h1 className="text-3xl font-bold text-slate-900">{selectedProgram.name}</h1>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditedProgramName(selectedProgram.name);
+                          setIsEditingProgramName(true);
+                        }}
+                        className="px-2.5 py-1 border border-slate-300 rounded text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Edit Name
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
             ) : (
-              <h1 className="text-3xl font-bold text-slate-900 mb-1">{selectedProgram.name}</h1>
+              <div>
+                <h1 className="text-3xl font-bold text-slate-900 mb-1">{selectedProgram.name}</h1>
+              </div>
             )}
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Program Short Name</span>
+              {isEditingProgramShortName ? (
+                <>
+                  <input
+                    value={editedProgramShortName}
+                    onChange={(e) => setEditedProgramShortName(e.target.value)}
+                    className="px-2 py-1 border border-slate-300 rounded text-sm w-44"
+                    placeholder="e.g. GAME-SPEC"
+                  />
+                  <button
+                    type="button"
+                    onClick={saveProgramShortName}
+                    className="px-2 py-1 bg-indigo-600 text-white rounded text-xs font-medium"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditedProgramShortName(selectedProgramShortName);
+                      setIsEditingProgramShortName(false);
+                    }}
+                    className="px-2 py-1 border border-slate-300 text-slate-700 rounded text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-sm font-semibold text-slate-700">
+                    {selectedProgramShortName || 'Not set'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditedProgramShortName(selectedProgramShortName);
+                      setIsEditingProgramShortName(true);
+                    }}
+                    className="px-2 py-1 border border-slate-300 rounded text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    Edit
+                  </button>
+                </>
+              )}
+            </div>
             <p className="text-slate-500 font-medium">{selectedProgram.type} • {selectedProgram.faculty} • Lead: {selectedProgram.lead}</p>
           </div>
           <div className="flex items-center gap-4">
@@ -745,8 +895,9 @@ export function ProgramDetailView(props) {
         <div className="flex border-b border-slate-200 overflow-x-auto no-scrollbar">
           {[
             { id: 'overview', icon: FileText, label: 'Overview & Milestones' },
-            ...(isBaseProgram ? [{ id: 'programInfo', icon: FileText, label: 'Program Info' }] : []),
+            { id: 'programInfo', icon: FileText, label: 'Program Info' },
             { id: 'map', icon: BookOpen, label: 'Curriculum Map' },
+            { id: 'curriculumOverview', icon: BookOpen, label: 'Curriculum Overview' },
             { id: 'reviews', icon: AlertCircle, label: 'Feedback & Reviews' },
             { id: 'faculty', icon: Users, label: 'Assigned Faculty' }
           ].map(tab => (
@@ -821,48 +972,153 @@ export function ProgramDetailView(props) {
                 </Card>
                 <Card className="p-6">
                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4">Program Color</h3>
-                  <div className="flex items-center gap-3 mb-4">
-                    <div
-                      className="w-10 h-10 rounded-lg border border-slate-300 shadow-sm"
-                      style={{ backgroundColor: selectedProgramColor }}
-                    />
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">Tree Row Swatch</div>
-                      <div className="text-xs text-slate-500">{selectedProgramColor}</div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-5 gap-2 mb-3">
-                    {PROGRAM_COLOR_PRESETS.map((color) => (
-                      <button
-                        key={color}
-                        type="button"
-                        onClick={() => updateProgramColor(selectedProgram.id, color)}
-                        className={`h-8 rounded-md border ${selectedProgramColor === color ? 'ring-2 ring-indigo-500 border-indigo-500' : 'border-slate-300 hover:border-slate-400'}`}
-                        style={{ backgroundColor: color }}
-                        title={`Set program color to ${color}`}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="color"
-                      value={selectedProgramColor}
-                      onChange={(event) => updateProgramColor(selectedProgram.id, event.target.value)}
-                      className="h-9 w-14 p-1 border border-slate-300 rounded bg-white"
-                    />
-                    <span className="text-xs text-slate-500">Choose custom color</span>
-                  </div>
+                  <ColorSwatchPicker
+                    label="Selected Color"
+                    value={selectedProgramColor}
+                    colors={PROGRAM_COLOR_PRESETS}
+                    onChange={(color) => updateProgramColor(selectedProgram.id, color)}
+                  />
                 </Card>
+                {isBaseProgram ? (
+                  <Card className="p-6">
+                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-3">Derived Programs</h3>
+                    {baseDerivedPrograms.length === 0 ? (
+                      <p className="text-xs text-slate-500">No derived programs yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {baseDerivedPrograms.map((program) => (
+                          <button
+                            key={program.id}
+                            type="button"
+                            onClick={() => openProgramOverview(program.id)}
+                            className="w-full text-left px-3 py-2 rounded border border-slate-200 hover:brightness-[0.98]"
+                            style={{ backgroundColor: getProgramDisplayColor(program) }}
+                          >
+                            <div className="text-sm font-semibold text-slate-900 truncate">{program.name}</div>
+                            {getProgramShortName(program) && (
+                              <div className="text-xs font-semibold text-slate-600 truncate mt-0.5">
+                                {getProgramShortName(program)}
+                              </div>
+                            )}
+                            <div className="text-xs text-slate-500">{program.type}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                ) : (
+                  <Card className="p-6">
+                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-3">Connected Parent Program</h3>
+                    {connectedParentProgram ? (
+                      <button
+                        type="button"
+                        onClick={() => openProgramOverview(connectedParentProgram.id)}
+                        className="w-full text-left px-3 py-2 rounded border border-slate-200 hover:brightness-[0.98]"
+                        style={{ backgroundColor: getProgramDisplayColor(connectedParentProgram) }}
+                      >
+                        <div className="text-sm font-semibold text-slate-900 truncate">{connectedParentProgram.name}</div>
+                        {getProgramShortName(connectedParentProgram) && (
+                          <div className="text-xs font-semibold text-slate-600 truncate mt-0.5">
+                            {getProgramShortName(connectedParentProgram)}
+                          </div>
+                        )}
+                        <div className="text-xs text-slate-500">{connectedParentProgram.type}</div>
+                      </button>
+                    ) : (
+                      <p className="text-xs text-slate-500">No connected parent found.</p>
+                    )}
+                  </Card>
+                )}
               </div>
             </div>
           )}
 
-          {activeTab === 'programInfo' && isBaseProgram && (
-            <ProgramInfoTab
-              selectedProgram={selectedProgram}
-              updateProgramInfo={updateProgramInfo}
-              onExportProgram={onExportProgram}
-            />
+          {activeTab === 'programInfo' &&
+            (isBaseProgram ? (
+              <ProgramInfoTab
+                selectedProgram={selectedProgram}
+                updateProgramInfo={updateProgramInfo}
+                onExportProgram={onExportProgram}
+              />
+            ) : (
+              <DerivedProgramInfoTab
+                selectedProgram={selectedProgram}
+                parentProgram={connectedParentProgram}
+                updateProgramInfo={updateProgramInfo}
+                onExportProgram={onExportProgram}
+              />
+            ))}
+
+          {activeTab === 'curriculumOverview' && (
+            <Card className="p-5">
+              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4">Curriculum Overview</h3>
+              <div className="space-y-3">
+                {curriculumOverviewGroups.map((group, index) => (
+                  <React.Fragment key={group.label}>
+                    <div className="border border-slate-200 rounded-lg bg-white">
+                      <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-700">{group.label}</div>
+                        <div className="text-[11px] text-slate-500">{group.courses.length} courses</div>
+                      </div>
+                      <div className="p-2 space-y-2 max-h-96 overflow-y-auto">
+                        {group.subgroups?.length ? (
+                          <div className="space-y-2">
+                            {group.subgroups.map((subgroup) => (
+                              <div key={subgroup.id} className="border border-slate-200 rounded bg-slate-50/40">
+                                <div className="px-2 py-1 border-b border-slate-200 flex items-center justify-between">
+                                  <div className="text-[11px] font-semibold text-slate-700">{subgroup.label}</div>
+                                  <div className="text-[11px] text-slate-500">{subgroup.courses.length} courses</div>
+                                </div>
+                                <div className="p-2">
+                                  {subgroup.courses.length === 0 ? (
+                                    <div className="text-xs text-slate-500">No courses in this sub-group.</div>
+                                  ) : (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                      {subgroup.courses.map((course, courseIndex) => (
+                                        <div
+                                          key={`${group.label}_${subgroup.id}_${course.code}_${courseIndex}`}
+                                          className={`${course.color || 'bg-slate-100'} px-2 py-1.5 rounded border border-slate-300`}
+                                        >
+                                          <div className="text-xs font-bold text-slate-900">{course.code}</div>
+                                          <div className="text-[11px] text-slate-800 leading-snug">{course.title}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : group.courses.length === 0 ? (
+                          <div className="text-xs text-slate-500 p-2">No courses in this group.</div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {group.courses.map((course, courseIndex) => (
+                              <div
+                                key={`${group.label}_${course.code}_${courseIndex}`}
+                                className={`${course.color || 'bg-slate-100'} px-2 py-1.5 rounded border border-slate-300`}
+                              >
+                                <div className="text-xs font-bold text-slate-900">{course.code}</div>
+                                <div className="text-[11px] text-slate-800 leading-snug">{course.title}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {index < curriculumOverviewGroups.length - 1 && (
+                      <div className="flex flex-col items-center -my-1">
+                        <div className="h-5 w-0.5 bg-slate-300" />
+                        <div className="w-9 h-9 rounded-full border-2 border-slate-300 bg-white text-slate-600 flex items-center justify-center text-xl font-bold">
+                          +
+                        </div>
+                        <div className="h-5 w-0.5 bg-slate-300" />
+                      </div>
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+            </Card>
           )}
 
           {activeTab === 'map' && (() => {
@@ -974,10 +1230,44 @@ export function ProgramDetailView(props) {
                 <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
                   <div className="xl:col-span-3">
                     <div className="flex flex-col border border-slate-200 bg-slate-200 gap-[1px] rounded-xl overflow-hidden shadow-sm">
-                  {selectedProgram.semesters.map((sem) => (
-                    <div key={sem.id} className="flex flex-col md:flex-row bg-white">
-                      <div className="w-full md:w-40 flex-shrink-0 p-4 bg-slate-50 flex items-center border-b md:border-b-0 md:border-r border-slate-200">
-                        <span className="font-bold text-sm text-slate-700 uppercase tracking-wide">{sem.name}</span>
+                  {selectedProgram.semesters.map((sem, semIndex) => {
+                    const semName = String(sem.name || '');
+                    const semLower = semName.toLowerCase();
+                    const isFall = semLower.includes('fall');
+                    const isWinter = semLower.includes('winter');
+                    const hasYear = semLower.includes('year');
+                    const yearMatch = semName.match(/year\s+(\d+)/i);
+                    const yearLabel = yearMatch ? `Year ${yearMatch[1]}` : null;
+                    const seasonLabel = isFall ? 'Fall' : isWinter ? 'Winter' : null;
+                    const showYearSeparator = isWinter && semIndex < selectedProgram.semesters.length - 1;
+
+                    return (
+                      <React.Fragment key={sem.id}>
+                        <div
+                          className={`flex flex-col md:flex-row bg-white ${
+                            isWinter ? 'border-b-2 border-slate-300' : ''
+                          }`}
+                        >
+                      <div
+                        className={`w-full md:w-40 flex-shrink-0 p-4 flex items-center border-b md:border-b-0 md:border-r border-slate-200 ${
+                          isFall ? 'bg-amber-50' : isWinter ? 'bg-sky-50' : 'bg-slate-50'
+                        }`}
+                      >
+                        <div>
+                          {yearLabel && (
+                            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{yearLabel}</div>
+                          )}
+                          <span className="font-bold text-sm text-slate-700 uppercase tracking-wide">{sem.name}</span>
+                          {seasonLabel && (
+                            <div className={`text-[10px] mt-1 inline-block px-1.5 py-0.5 rounded border ${
+                              isFall
+                                ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                : 'bg-sky-100 text-sky-700 border-sky-200'
+                            }`}>
+                              {seasonLabel} Term
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div
                         className="flex-1 p-2 grid gap-2"
@@ -987,6 +1277,8 @@ export function ProgramDetailView(props) {
                           const course = sem.courses[i];
                           const slotKey = `${sem.id}:${i}`;
                           const isElectiveSelected = selectedElectiveSlotSet.has(slotKey);
+                          const canMarkNewCourse =
+                            !!course && !isBaseProgram && !isLockedCoreCourse(course) && !isSpecElectiveCourse(course);
                           return (
                             <div 
                               key={`${sem.id}_${i}`}
@@ -1003,8 +1295,8 @@ export function ProgramDetailView(props) {
                               className={`h-24 rounded-lg relative transition-colors cursor-pointer ${selectedSlot?.semesterId === sem.id && selectedSlot?.index === i ? 'ring-2 ring-indigo-500' : ''} ${isElectiveSelected ? 'ring-2 ring-amber-500' : ''} ${
                                 course
                                   ? isLockedCoreCourse(course)
-                                    ? `${course.color || 'bg-slate-200'} shadow-sm border border-slate-400/60`
-                                    : `${course.color || 'bg-slate-200'} shadow-sm`
+                                    ? `${course.color || 'bg-slate-200'} shadow-sm border ${course.isNewCourse ? 'border-amber-500' : 'border-slate-400/60'}`
+                                    : `${course.color || 'bg-slate-200'} shadow-sm ${course.isNewCourse ? 'border border-amber-400/90' : ''}`
                                   : 'bg-slate-50 border border-dashed border-slate-300'
                               }`}
                               onDragOver={(e) => { e.preventDefault(); }}
@@ -1054,6 +1346,28 @@ export function ProgramDetailView(props) {
                                   <div className="absolute top-1.5 left-1.5 text-[10px] font-bold text-black/50 bg-white/40 px-1.5 py-0.5 rounded shadow-sm">
                                       {course.credits !== undefined ? course.credits : 3}cr
                                   </div>
+                                  {course.isNewCourse && (
+                                    <div className="absolute top-1.5 left-1/2 -translate-x-1/2 text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
+                                      NEW
+                                    </div>
+                                  )}
+                                  {canMarkNewCourse && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleNewCourse(selectedProgram.id, sem.id, i);
+                                      }}
+                                      className={`absolute bottom-1 left-1 text-[10px] px-1.5 py-0.5 rounded border ${
+                                        course.isNewCourse
+                                          ? 'bg-amber-600 text-white border-amber-700'
+                                          : 'bg-white/70 text-slate-700 border-white/80'
+                                      }`}
+                                      title={course.isNewCourse ? 'Marked as NEW course' : 'Mark as NEW course'}
+                                    >
+                                      NEW
+                                    </button>
+                                  )}
                                   {selectedProgram.type !== 'Specialization' && (
                                     <button
                                       type="button"
@@ -1095,7 +1409,10 @@ export function ProgramDetailView(props) {
                         })}
                       </div>
                     </div>
-                  ))}
+                        {showYearSeparator && <div className="h-1 bg-slate-300/70" />}
+                      </React.Fragment>
+                    );
+                  })}
                     </div>
                   </div>
                   <div className="space-y-4">

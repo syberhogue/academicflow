@@ -2,9 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { BookOpen, Activity, CheckCircle2, Plus, Building, LayoutGrid, Network, ChevronRight, ChevronDown, Star, Trash2 } from 'lucide-react';
 import { Badge, Card, ProgressBar } from '../ui';
 
-  export function DashboardView({ programs, onCreateProgram, onOpenProgram, onToggleFavorite, onDeleteProgram }) {
+export function DashboardView({ programs, onCreateProgram, onOpenProgram, onToggleFavorite, onDeleteProgram }) {
   const [viewMode, setViewMode] = useState('tree');
   const [collapsedById, setCollapsedById] = useState({});
+  const getProgramShortName = (program) => {
+    if (!program) return '';
+    const raw = program?.programInfo?.programShortName || program?.programInfo?.shortFormName || '';
+    return String(raw).trim();
+  };
 
   const { rootPrograms, childrenByParent } = useMemo(() => {
     const idSet = new Set(programs.map((program) => program.id));
@@ -98,6 +103,11 @@ import { Badge, Card, ProgressBar } from '../ui';
                     </span>
                   )}
                 </div>
+                {getProgramShortName(program) && (
+                  <div className="text-[11px] text-slate-700/90 font-semibold truncate mt-0.5">
+                    {getProgramShortName(program)}
+                  </div>
+                )}
                 <div className="text-[11px] text-slate-600 mt-0.5 truncate">{program.type} • {program.faculty}</div>
               </button>
               <Badge type={program.status === 'Drafting' ? 'draft' : program.status === 'In Review' ? 'warning' : 'success'}>
@@ -246,6 +256,9 @@ import { Badge, Card, ProgressBar } from '../ui';
                   </div>
                   <div onClick={() => onOpenProgram(prog.id)}>
                     <h3 className="text-lg font-bold text-slate-900 mb-2">{prog.name}</h3>
+                    {getProgramShortName(prog) && (
+                      <div className="text-xs font-semibold text-slate-700 mb-2">{getProgramShortName(prog)}</div>
+                    )}
                     <div className="flex items-center gap-2 text-sm text-slate-500 mb-4">
                       <Building size={14} /> {prog.faculty}
                     </div>

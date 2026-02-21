@@ -50,45 +50,49 @@ const loadFavoriteProgramIds = () => {
   }
 };
 
-const loadProgramsFromStorage = () => {
-  const normalizeProgram = (program, favoriteProgramIds) => ({
+const normalizeProgramCollection = (rawPrograms = [], favoriteProgramIds = new Set()) => {
+  const basePrograms = rawPrograms.map((program) => ({
     ...program,
     isFavorite: favoriteProgramIds.has(program.id) || !!program.isFavorite,
     color: program.color || getDefaultProgramColor(program.type, !!(program.parentProgramId || program.parentProgram)),
     mapColumns: Math.min(
       MAX_MAP_COLUMNS,
       Math.max(DEFAULT_MAP_COLUMNS, Number(program.mapColumns) || inferOccupiedMapColumns(program.semesters || []))
-    ),
-    programInfo:
-      program.parentProgramId || program.parentProgram
-        ? program.programInfo || null
-        : normalizeProgramInfo(program)
-  });
+    )
+  }));
 
+  const byId = new Map(basePrograms.map((program) => [program.id, program]));
+  const nameToId = new Map(basePrograms.map((program) => [program.name, program.id]));
+
+  return basePrograms.map((program) => {
+    const parentId =
+      program.parentProgramId || (program.parentProgram ? nameToId.get(program.parentProgram) : null) || null;
+    const parentProgram = parentId ? byId.get(parentId) || null : null;
+
+    return {
+      ...program,
+      programInfo: normalizeProgramInfo(program, parentProgram)
+    };
+  });
+};
+
+const loadProgramsFromStorage = () => {
   try {
     const favoriteProgramIds = loadFavoriteProgramIds();
     const storedPrograms = localStorage.getItem(PROGRAMS_STORAGE_KEY);
     if (!storedPrograms) {
-      return INITIAL_DATA.map((program) => normalizeProgram(program, favoriteProgramIds));
+      return normalizeProgramCollection(INITIAL_DATA, favoriteProgramIds);
     }
 
     const parsedPrograms = JSON.parse(storedPrograms);
     if (!Array.isArray(parsedPrograms)) {
-      return INITIAL_DATA.map((program) => normalizeProgram(program, favoriteProgramIds));
+      return normalizeProgramCollection(INITIAL_DATA, favoriteProgramIds);
     }
 
-    return parsedPrograms.map((program) => normalizeProgram(program, favoriteProgramIds));
+    return normalizeProgramCollection(parsedPrograms, favoriteProgramIds);
   } catch (error) {
     console.error('Failed to load saved programs from localStorage', error);
-    return INITIAL_DATA.map((program) => ({
-      ...program,
-      color: program.color || getDefaultProgramColor(program.type, !!(program.parentProgramId || program.parentProgram)),
-      mapColumns: inferOccupiedMapColumns(program.semesters || []),
-      programInfo:
-        program.parentProgramId || program.parentProgram
-          ? program.programInfo || null
-          : normalizeProgramInfo(program)
-    }));
+    return normalizeProgramCollection(INITIAL_DATA, loadFavoriteProgramIds());
   }
 };
 
@@ -175,6 +179,11 @@ export default function App() {
     () => programs.filter((program) => !!program.isFavorite).sort((a, b) => a.name.localeCompare(b.name)),
     [programs]
   );
+  const getProgramShortName = (program) => {
+    if (!program) return '';
+    const raw = program?.programInfo?.programShortName || program?.programInfo?.shortFormName || '';
+    return String(raw).trim();
+  };
 
   const navigateTo = (view) => {
     setActiveView(view);
@@ -284,6 +293,38 @@ export default function App() {
     );
   };
 
+  const toggleNewCourse = (progId, semesterId, courseIndex) => {
+    setPrograms((currentPrograms) =>
+      currentPrograms.map((program) => {
+        if (program.id !== progId) {
+          return program;
+        }
+
+        return {
+          ...program,
+          semesters: program.semesters.map((semester) => {
+            if (semester.id !== semesterId) {
+              return semester;
+            }
+
+            const updatedCourses = [...semester.courses];
+            const currentCourse = updatedCourses[courseIndex];
+            if (!currentCourse) {
+              return semester;
+            }
+
+            updatedCourses[courseIndex] = {
+              ...currentCourse,
+              isNewCourse: !currentCourse.isNewCourse
+            };
+
+            return { ...semester, courses: updatedCourses };
+          })
+        };
+      })
+    );
+  };
+
   const updateSpecializationBlocks = (progId, specializationBlocks) => {
     setPrograms((currentPrograms) =>
       currentPrograms.map((program) =>
@@ -370,26 +411,38 @@ export default function App() {
     }
   };
 
-  const handleExportProgram = (progId) => {
+  const handleExportProgram = async (progId) => {
     const today = getTodayIsoDate();
-    setPrograms((currentPrograms) =>
-      currentPrograms.map((program) => {
-        if (program.id !== progId) {
-          return program;
-        }
-        if (!program.programInfo) {
-          return program;
-        }
-        return {
-          ...program,
-          programInfo: {
-            ...program.programInfo,
-            version: Math.max(1, Number(program.programInfo.version) || 1) + 1,
-            date: today
-          }
-        };
-      })
-    );
+    const program = programs.find((candidate) => candidate.id === progId);
+    if (!program) {
+      return;
+    }
+
+    const nextProgram = {
+      ...program,
+      programInfo: {
+        ...(program.programInfo || {}),
+        version: Math.max(1, Number(program.programInfo?.version) || 1) + 1,
+        date: today
+      }
+    };
+
+    const nextPrograms = programs.map((candidate) => (candidate.id === progId ? nextProgram : candidate));
+    setPrograms(nextPrograms);
+
+    try {
+      localStorage.setItem(PROGRAMS_STORAGE_KEY, JSON.stringify(nextPrograms));
+    } catch (error) {
+      console.error('Failed to persist program updates during export', error);
+    }
+
+    try {
+      const { exportProgramPdf } = await import('./src/exportProgramPdf');
+      exportProgramPdf(nextProgram);
+    } catch (error) {
+      console.error('Failed to export program PDF', error);
+      window.alert('Failed to export PDF. Please try again.');
+    }
   };
 
   const handleCreateDerivedProgram = (derivedType, parentProgram) => {
@@ -451,6 +504,7 @@ export default function App() {
   const handleOpenProgram = (programId) => {
     setSelectedProgramId(programId);
     setActiveView('detail');
+    setActiveTab('overview');
     setMobileMenuOpen(false);
   };
 
@@ -589,7 +643,7 @@ export default function App() {
                 No favorites yet.
               </div>
             ) : (
-              <div className="space-y-1 max-h-48 overflow-y-auto">
+              <div className="space-y-1 overflow-y-auto pr-1" style={{ maxHeight: 'calc(100vh - 240px)' }}>
                 {favoritePrograms.map((program) => (
                   <button
                     key={program.id}
@@ -603,7 +657,14 @@ export default function App() {
                     title={program.name}
                   >
                     <Star size={14} className={selectedProgramId === program.id && activeView === 'detail' ? 'text-amber-300' : 'text-amber-400'} fill="currentColor" />
-                    <span className="truncate">{program.name}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate">{program.name}</span>
+                      {getProgramShortName(program) && (
+                        <span className={`block truncate text-[11px] ${selectedProgramId === program.id && activeView === 'detail' ? 'text-slate-200' : 'text-slate-400'}`}>
+                          {getProgramShortName(program)}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -643,6 +704,7 @@ export default function App() {
         )}
         {activeView === 'detail' && (
           <ProgramDetailView
+            programs={programs}
             selectedProgram={selectedProgram}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
@@ -665,6 +727,7 @@ export default function App() {
             onCreateDerivedProgram={handleCreateDerivedProgram}
             onDuplicateSpecialization={handleDuplicateSpecialization}
             toggleCoreCourse={toggleCoreCourse}
+            toggleNewCourse={toggleNewCourse}
             updateSpecializationBlocks={updateSpecializationBlocks}
             updateProgramName={updateProgramName}
             updateProgramInfo={updateProgramInfo}
@@ -675,6 +738,7 @@ export default function App() {
         )}
         {activeView === 'courses' && (
           <GlobalCoursesView
+            programs={programs}
             globalCourses={globalCourses}
             handleAddGlobalCourse={handleAddGlobalCourse}
             updateGlobalCourse={updateGlobalCourse}

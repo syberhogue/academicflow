@@ -1,11 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { Pencil, Plus, X } from 'lucide-react';
+import { Pencil, X } from 'lucide-react';
 import { COURSE_COLORS } from '../data';
-import { Badge, Card } from '../ui';
+import { Badge, Card, ColorSwatchPicker } from '../ui';
 
 const getCourseDiscipline = (course) => course.discipline || 'Uncategorized';
 
+const getProgramShortLabel = (program) =>
+  program?.programInfo?.programShortName ||
+  program?.programInfo?.shortFormName ||
+  program?.name;
+
 export function GlobalCoursesView({
+  programs,
   globalCourses,
   handleAddGlobalCourse,
   updateGlobalCourse,
@@ -14,6 +20,7 @@ export function GlobalCoursesView({
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [disciplineFilter, setDisciplineFilter] = useState('All');
+  const [programFilter, setProgramFilter] = useState('All');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedColor, setSelectedColor] = useState(COURSE_COLORS[0]);
   const [editingCourseId, setEditingCourseId] = useState(null);
@@ -31,6 +38,34 @@ export function GlobalCoursesView({
     return ['All', ...Array.from(unique).sort((a, b) => a.localeCompare(b))];
   }, [courseCategories, globalCourses]);
 
+  const programOptions = useMemo(
+    () =>
+      (programs || [])
+        .map((program) => ({
+          id: program.id,
+          label: getProgramShortLabel(program),
+          fullName: program.name
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [programs]
+  );
+
+  const programCourseCodeSets = useMemo(() => {
+    const map = new Map();
+    (programs || []).forEach((program) => {
+      const codeSet = new Set();
+      (program.semesters || []).forEach((semester) => {
+        (semester.courses || []).forEach((course) => {
+          if (course?.code) {
+            codeSet.add(course.code);
+          }
+        });
+      });
+      map.set(program.id, codeSet);
+    });
+    return map;
+  }, [programs]);
+
   const filteredCourses = useMemo(() => {
     return globalCourses.filter((course) => {
       const discipline = getCourseDiscipline(course);
@@ -42,9 +77,12 @@ export function GlobalCoursesView({
         course.title.toLowerCase().includes(query) ||
         discipline.toLowerCase().includes(query);
 
-      return disciplineMatches && searchMatches;
+      const programMatches =
+        programFilter === 'All' || (programCourseCodeSets.get(programFilter)?.has(course.code) ?? false);
+
+      return disciplineMatches && searchMatches && programMatches;
     });
-  }, [globalCourses, disciplineFilter, searchTerm]);
+  }, [globalCourses, disciplineFilter, searchTerm, programFilter, programCourseCodeSets]);
 
   const groupedCourses = useMemo(() => {
     const groups = {};
@@ -103,13 +141,6 @@ export function GlobalCoursesView({
           <h1 className="text-3xl font-bold text-slate-900">Course Catalog</h1>
           <p className="text-slate-500">Manage all courses, categories, and visual tags</p>
         </div>
-        <button
-          type="button"
-          onClick={handleAddCategory}
-          className="px-3 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 flex items-center gap-2"
-        >
-          <Plus size={16} /> Category
-        </button>
       </div>
 
       <Card className="p-6">
@@ -119,23 +150,25 @@ export function GlobalCoursesView({
             setSelectedCategory('');
             setSelectedColor(COURSE_COLORS[0]);
           }}
-          className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-8 items-end bg-slate-50 p-4 rounded-lg border border-slate-200"
+          className="space-y-4 mb-8 bg-slate-50 p-4 rounded-lg border border-slate-200"
         >
-          <div className="md:col-span-1">
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Code</label>
-            <input name="code" className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white" required />
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+            <div>
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Code</label>
+              <input name="code" className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white" required />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Title</label>
+              <input name="title" className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white" required />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Credits</label>
+              <input type="number" name="credits" defaultValue={3} min={0} max={15} className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white" required />
+            </div>
           </div>
-          <div className="md:col-span-2">
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Title</label>
-            <input name="title" className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white" required />
-          </div>
-          <div>
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Credits</label>
-            <input type="number" name="credits" defaultValue={3} min={0} max={15} className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white" required />
-          </div>
-          <div>
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Category</label>
-            <div className="flex items-center gap-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+            <div>
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Category</label>
               <select
                 name="discipline"
                 value={selectedCategory}
@@ -151,36 +184,23 @@ export function GlobalCoursesView({
                     </option>
                   ))}
               </select>
-              <button
-                type="button"
-                onClick={handleAddCategory}
-                className="px-2 py-2 border border-slate-300 rounded text-slate-700 hover:bg-slate-100"
-                title="Add category"
-              >
-                +
+            </div>
+            <div className="flex items-end">
+              <button type="submit" className="w-full md:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+                Add to Catalog
               </button>
             </div>
           </div>
-          <div>
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 block">Color</label>
-            <select
-              name="color"
-              value={selectedColor}
-              onChange={(event) => setSelectedColor(event.target.value)}
-              className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-            >
-              {COURSE_COLORS.map((color) => (
-                <option key={color} value={color}>
-                  {color.replace('bg-', '')}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="md:col-span-6">
-            <button type="submit" className="w-full md:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
-              Add to Catalog
-            </button>
-          </div>
+          <input type="hidden" name="color" value={selectedColor} />
+          <ColorSwatchPicker
+            label="Selected Color"
+            value={selectedColor}
+            colors={COURSE_COLORS}
+            onChange={setSelectedColor}
+            allowCustom={false}
+            swatchClassNameForColor={(color) => color}
+            className="pt-1"
+          />
         </form>
 
         <div className="space-y-4 mb-6">
@@ -204,7 +224,8 @@ export function GlobalCoursesView({
               ))}
             </select>
           </div>
-          <div className="flex flex-wrap gap-2">
+
+          <div className="flex flex-wrap gap-2 items-center">
             {disciplineOptions.map((discipline) => (
               <button
                 key={discipline}
@@ -219,7 +240,47 @@ export function GlobalCoursesView({
                 {discipline}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={handleAddCategory}
+              className="px-2.5 py-1 rounded-full text-xs font-medium border bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+            >
+              + Category
+            </button>
           </div>
+
+          <div className="pt-1">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-600 mb-2">Program Filter</div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setProgramFilter('All')}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
+                  programFilter === 'All'
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                All Programs
+              </button>
+              {programOptions.map((program) => (
+                <button
+                  key={program.id}
+                  type="button"
+                  onClick={() => setProgramFilter(program.id)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
+                    programFilter === program.id
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title={program.fullName}
+                >
+                  {program.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <p className="text-xs text-slate-500">
             Showing {filteredCourses.length} of {globalCourses.length} courses
           </p>
@@ -312,46 +373,29 @@ export function GlobalCoursesView({
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">Category</label>
-                <div className="flex items-center gap-1">
-                  <select
-                    value={editDraft.discipline}
-                    onChange={(event) => setEditDraft((current) => ({ ...current, discipline: event.target.value }))}
-                    className="w-full px-3 py-2 border border-slate-300 rounded text-sm"
-                  >
-                    <option value="">Uncategorized</option>
-                    {disciplineOptions
-                      .filter((value) => value !== 'All')
-                      .map((category) => (
-                        <option key={category} value={category}>
-                          {category}
-                        </option>
-                      ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={handleAddCategory}
-                    className="px-2 py-2 border border-slate-300 rounded text-slate-700 hover:bg-slate-100"
-                    title="Add category"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">Color</label>
                 <select
-                  value={editDraft.color}
-                  onChange={(event) => setEditDraft((current) => ({ ...current, color: event.target.value }))}
+                  value={editDraft.discipline}
+                  onChange={(event) => setEditDraft((current) => ({ ...current, discipline: event.target.value }))}
                   className="w-full px-3 py-2 border border-slate-300 rounded text-sm"
                 >
-                  {COURSE_COLORS.map((color) => (
-                    <option key={color} value={color}>
-                      {color.replace('bg-', '')}
-                    </option>
-                  ))}
+                  <option value="">Uncategorized</option>
+                  {disciplineOptions
+                    .filter((value) => value !== 'All')
+                    .map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
                 </select>
               </div>
-              <div className={`h-12 rounded border border-slate-300 ${editDraft.color}`} />
+              <ColorSwatchPicker
+                label="Selected Color"
+                value={editDraft.color}
+                colors={COURSE_COLORS}
+                onChange={(color) => setEditDraft((current) => ({ ...current, color }))}
+                allowCustom={false}
+                swatchClassNameForColor={(color) => color}
+              />
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -375,4 +419,3 @@ export function GlobalCoursesView({
     </div>
   );
 }
-

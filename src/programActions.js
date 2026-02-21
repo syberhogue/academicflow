@@ -45,7 +45,14 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
     if (applyCiqeTemplate && parentProgram) {
       return parentProgram.semesters.map((semester) => ({
         ...semester,
-        courses: [...semester.courses]
+        courses: semester.courses.map((course) =>
+          course
+            ? {
+                ...course,
+                isNewCourse: false
+              }
+            : null
+        )
       }));
     }
 
@@ -71,7 +78,7 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
     }));
   };
 
-  return {
+  const newProgramBase = {
     id: `prog_${timestamp}`,
     name: formData.get('name'),
     type,
@@ -113,11 +120,16 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
     semesters: buildSemesters(),
     reviews: [],
     mapColumns: DEFAULT_MAP_COLUMNS,
-    programInfo: !parentProgram ? createDefaultProgramInfo({ name: formData.get('name'), lead: formData.get('lead') }) : null,
+    programInfo: null,
     specializationBlocks: isSpecialization ? createDefaultSpecializationRows() : [],
     electiveSuggestionMaps: {},
     facultyMembers: [{ id: `f_${timestamp}`, name: formData.get('lead'), role: 'Program Lead' }],
     color: getDefaultProgramColor(type, !!parentProgram)
+  };
+
+  return {
+    ...newProgramBase,
+    programInfo: createDefaultProgramInfo(newProgramBase, parentProgram)
   };
 };
 

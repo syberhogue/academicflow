@@ -57,10 +57,12 @@ const TextUploadSection = ({
 export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportProgram }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(createDefaultProgramInfo(selectedProgram));
+  const [activeSection, setActiveSection] = useState('all');
 
   useEffect(() => {
     setDraft(selectedProgram?.programInfo || createDefaultProgramInfo(selectedProgram));
     setIsEditing(false);
+    setActiveSection('all');
   }, [selectedProgram?.id, selectedProgram?.programInfo]);
 
   const academicYearColumns = useMemo(
@@ -68,12 +70,38 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
     [draft.enrolment?.startAcademicYear]
   );
 
-  const enrolmentTotals = useMemo(() => {
-    const matrix = draft.enrolment?.projections || [];
-    return academicYearColumns.map((_, columnIndex) =>
-      matrix.reduce((total, row) => total + (Number(row?.[columnIndex]) || 0), 0)
+  const enrolmentProjectionMatrix = useMemo(() => {
+    const firstYearIntake = Math.max(0, Number(draft.enrolment?.firstYearIntake) || 0);
+    const projectedYearIncreasePct = Math.max(-100, Number(draft.enrolment?.projectedYearIncreasePct) || 0);
+    const projectedRetentionLossPct = Math.max(0, Math.min(100, Number(draft.enrolment?.projectedRetentionLossPct) || 0));
+    const intakeGrowthFactor = 1 + projectedYearIncreasePct / 100;
+    const retentionFactor = 1 - projectedRetentionLossPct / 100;
+
+    return Array.from({ length: 5 }).map((_, rowIndex) =>
+      academicYearColumns.map((__, colIndex) => {
+        if (rowIndex > colIndex) {
+          return null;
+        }
+        const cohortStartOffset = colIndex - rowIndex;
+        const cohortIntake = firstYearIntake * Math.pow(intakeGrowthFactor, cohortStartOffset);
+        const projected = cohortIntake * Math.pow(retentionFactor, rowIndex);
+        return Math.max(0, Math.round(projected));
+      })
     );
-  }, [draft.enrolment?.projections, academicYearColumns]);
+  }, [
+    draft.enrolment?.firstYearIntake,
+    draft.enrolment?.projectedYearIncreasePct,
+    draft.enrolment?.projectedRetentionLossPct,
+    academicYearColumns
+  ]);
+
+  const enrolmentTotals = useMemo(
+    () =>
+      academicYearColumns.map((_, columnIndex) =>
+        enrolmentProjectionMatrix.reduce((total, row) => total + (Number(row?.[columnIndex]) || 0), 0)
+      ),
+    [enrolmentProjectionMatrix, academicYearColumns]
+  );
 
   const setTopLevelField = (key, value) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -89,21 +117,14 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
     }));
   };
 
-  const updateEnrolmentProjection = (rowIndex, columnIndex, value) => {
-    setDraft((current) => {
-      const nextMatrix = (current.enrolment?.projections || []).map((row) => [...row]);
-      if (!nextMatrix[rowIndex]) {
-        nextMatrix[rowIndex] = Array.from({ length: academicYearColumns.length }).map(() => 0);
+  const setEnrolmentField = (key, value) => {
+    setDraft((current) => ({
+      ...current,
+      enrolment: {
+        ...(current.enrolment || {}),
+        [key]: value
       }
-      nextMatrix[rowIndex][columnIndex] = Math.max(0, Number(value) || 0);
-      return {
-        ...current,
-        enrolment: {
-          ...(current.enrolment || {}),
-          projections: nextMatrix
-        }
-      };
-    });
+    }));
   };
 
   const toggleCollaboratingFaculty = (facultyCode) => {
@@ -128,6 +149,17 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
     setDraft(selectedProgram?.programInfo || createDefaultProgramInfo(selectedProgram));
     setIsEditing(false);
   };
+
+  const sectionItems = [
+    { id: 'all', label: 'ALL' },
+    { id: 'program-info-core', label: 'Core Metadata' },
+    { id: 'program-info-abstract', label: '1. Abstract' },
+    { id: 'program-info-rationale', label: '2. Rationale' },
+    { id: 'program-info-mission', label: '3. Alignment' },
+    { id: 'program-info-need', label: '4. Need/Demand' },
+    { id: 'program-info-enrolment', label: '5. Enrolment' },
+    { id: 'program-info-admissions', label: '6. Admission' }
+  ];
 
   return (
     <div className="space-y-6">
@@ -175,7 +207,27 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
         </div>
       </Card>
 
-      <Card className="p-4">
+      <Card className="p-3 bg-slate-900 border-slate-800">
+        <div className="flex flex-wrap gap-2">
+          {sectionItems.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              onClick={() => setActiveSection(section.id)}
+              className={`px-2.5 py-1 rounded-full border text-xs font-medium transition-colors ${
+                activeSection === section.id
+                  ? 'bg-indigo-500 text-white border-indigo-400'
+                  : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      {(activeSection === 'all' || activeSection === 'program-info-core') && (
+      <Card id="program-info-core" className="p-4">
         <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-3">Core Metadata</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -201,7 +253,7 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
               />
             </div>
             <div>
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">Short Form</label>
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">Degree Short Name</label>
               <input
                 value={draft.degreeShortForm || ''}
                 onChange={(event) => setTopLevelField('degreeShortForm', event.target.value)}
@@ -332,39 +384,53 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
           </div>
         </div>
       </Card>
+      )}
 
-      <TextUploadSection
-        id="section-abstract-upload"
-        title="1. Program Abstract"
-        instructions="Please provide a brief overview of the proposed program for external/public sharing in 1000 characters or less. Include purpose, outcomes, program components, and delivery context where relevant."
-        value={draft.abstract || { text: '', pdfName: '' }}
-        onTextChange={(value) => setNestedTextUpload('abstract', { text: value })}
-        onPdfSelect={(value) => setNestedTextUpload('abstract', { pdfName: value })}
-        disabled={!isEditing}
-        maxLength={MAX_ABSTRACT}
-      />
+      {(activeSection === 'all' || activeSection === 'program-info-abstract') && (
+      <div id="program-info-abstract">
+        <TextUploadSection
+          id="section-abstract-upload"
+          title="1. Program Abstract"
+          instructions="Please provide a brief overview of the proposed program for external/public sharing in 1000 characters or less. Include purpose, outcomes, program components, and delivery context where relevant."
+          value={draft.abstract || { text: '', pdfName: '' }}
+          onTextChange={(value) => setNestedTextUpload('abstract', { text: value })}
+          onPdfSelect={(value) => setNestedTextUpload('abstract', { pdfName: value })}
+          disabled={!isEditing}
+          maxLength={MAX_ABSTRACT}
+        />
+      </div>
+      )}
 
-      <TextUploadSection
-        id="section-rationale-upload"
-        title="2. Academic Rationale"
-        instructions="Identify what is being proposed and why. Explain program objectives, nomenclature, delivery model, curriculum fit, and distinct/innovative components."
-        value={draft.academicRationale || { text: '', pdfName: '' }}
-        onTextChange={(value) => setNestedTextUpload('academicRationale', { text: value })}
-        onPdfSelect={(value) => setNestedTextUpload('academicRationale', { pdfName: value })}
-        disabled={!isEditing}
-      />
+      {(activeSection === 'all' || activeSection === 'program-info-rationale') && (
+      <div id="program-info-rationale">
+        <TextUploadSection
+          id="section-rationale-upload"
+          title="2. Academic Rationale"
+          instructions="Identify what is being proposed and why. Explain program objectives, nomenclature, delivery model, curriculum fit, and distinct/innovative components."
+          value={draft.academicRationale || { text: '', pdfName: '' }}
+          onTextChange={(value) => setNestedTextUpload('academicRationale', { text: value })}
+          onPdfSelect={(value) => setNestedTextUpload('academicRationale', { pdfName: value })}
+          disabled={!isEditing}
+        />
+      </div>
+      )}
 
-      <TextUploadSection
-        id="section-mission-upload"
-        title="3. Mission / Vision / IARP / SMA Alignment"
-        instructions="Detail consistency of the program with university mission/vision, faculty and university IARP priorities, sector mandate, and strategic mandate agreement areas of strength."
-        value={draft.missionAlignment || { text: '', pdfName: '' }}
-        onTextChange={(value) => setNestedTextUpload('missionAlignment', { text: value })}
-        onPdfSelect={(value) => setNestedTextUpload('missionAlignment', { pdfName: value })}
-        disabled={!isEditing}
-      />
+      {(activeSection === 'all' || activeSection === 'program-info-mission') && (
+      <div id="program-info-mission">
+        <TextUploadSection
+          id="section-mission-upload"
+          title="3. Mission / Vision / IARP / SMA Alignment"
+          instructions="Detail consistency of the program with university mission/vision, faculty and university IARP priorities, sector mandate, and strategic mandate agreement areas of strength."
+          value={draft.missionAlignment || { text: '', pdfName: '' }}
+          onTextChange={(value) => setNestedTextUpload('missionAlignment', { text: value })}
+          onPdfSelect={(value) => setNestedTextUpload('missionAlignment', { pdfName: value })}
+          disabled={!isEditing}
+        />
+      </div>
+      )}
 
-      <Card className="p-4 space-y-4">
+      {(activeSection === 'all' || activeSection === 'program-info-need') && (
+      <Card id="program-info-need" className="p-4 space-y-4">
         <h4 className="text-sm font-bold text-slate-900">4. Need, Demand, and Duplication</h4>
         <TextUploadSection
           id="section-need-a-upload"
@@ -442,29 +508,66 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
           disabled={!isEditing}
         />
       </Card>
+      )}
 
-      <Card className="p-4">
+      {(activeSection === 'all' || activeSection === 'program-info-enrolment') && (
+      <Card id="program-info-enrolment" className="p-4">
         <h4 className="text-sm font-bold text-slate-900 mb-2">5. Enrolment Information</h4>
         <p className="text-xs text-slate-600 mb-3">
-          Complete Table 1 with projected enrolment. Set the first academic year; subsequent years auto-increment.
+          Complete Table 1 with projected enrolment. Enter the first Year 1 intake, projected year-over-year intake increase, and projected retention loss.
         </p>
-        <div className="mb-3 w-44">
-          <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">First Academic Year</label>
-          <input
-            value={draft.enrolment?.startAcademicYear || '2025/26'}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                enrolment: {
-                  ...(current.enrolment || {}),
-                  startAcademicYear: event.target.value
-                }
-              }))
-            }
-            disabled={!isEditing}
-            className="w-full px-3 py-2 border border-slate-300 rounded text-sm disabled:bg-slate-100"
-            placeholder="e.g. 2025/26"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+          <div>
+            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">First Academic Year</label>
+            <input
+              value={draft.enrolment?.startAcademicYear || '2025/26'}
+              onChange={(event) => setEnrolmentField('startAcademicYear', event.target.value)}
+              disabled={!isEditing}
+              className="w-full px-3 py-2 border border-slate-300 rounded text-sm disabled:bg-slate-100"
+              placeholder="e.g. 2025/26"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">Year 1 Intake</label>
+            <input
+              type="number"
+              min={0}
+              value={draft.enrolment?.firstYearIntake ?? 0}
+              onChange={(event) => setEnrolmentField('firstYearIntake', Math.max(0, Number(event.target.value) || 0))}
+              disabled={!isEditing}
+              className="w-full px-3 py-2 border border-slate-300 rounded text-sm disabled:bg-slate-100"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">Projected Year/Year Increase %</label>
+            <input
+              type="number"
+              min={-100}
+              step="0.1"
+              value={draft.enrolment?.projectedYearIncreasePct ?? 0}
+              onChange={(event) => setEnrolmentField('projectedYearIncreasePct', Number(event.target.value) || 0)}
+              disabled={!isEditing}
+              className="w-full px-3 py-2 border border-slate-300 rounded text-sm disabled:bg-slate-100"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-1">Projected Retention Loss %</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.1"
+              value={draft.enrolment?.projectedRetentionLossPct ?? 0}
+              onChange={(event) =>
+                setEnrolmentField(
+                  'projectedRetentionLossPct',
+                  Math.max(0, Math.min(100, Number(event.target.value) || 0))
+                )
+              }
+              disabled={!isEditing}
+              className="w-full px-3 py-2 border border-slate-300 rounded text-sm disabled:bg-slate-100"
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full border border-slate-200 text-sm">
@@ -480,18 +583,29 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
               {Array.from({ length: 5 }).map((_, rowIndex) => (
                 <tr key={`level_${rowIndex}`} className="border-b border-slate-100">
                   <td className="p-2 font-medium text-slate-700">Year {rowIndex + 1}</td>
-                  {academicYearColumns.map((_, colIndex) => (
+                  {academicYearColumns.map((_, colIndex) => {
+                    const value = enrolmentProjectionMatrix?.[rowIndex]?.[colIndex];
+                    const isUnavailable = value === null || value === undefined;
+                    return (
                     <td key={`cell_${rowIndex}_${colIndex}`} className="p-1 text-center">
-                      <input
-                        type="number"
-                        min={0}
-                        value={draft.enrolment?.projections?.[rowIndex]?.[colIndex] ?? 0}
-                        onChange={(event) => updateEnrolmentProjection(rowIndex, colIndex, event.target.value)}
-                        disabled={!isEditing}
-                        className="w-20 px-2 py-1 border border-slate-300 rounded text-sm text-center disabled:bg-slate-100"
-                      />
+                      {isUnavailable ? (
+                        <span className="inline-block w-20 px-2 py-1 text-slate-300">-</span>
+                      ) : rowIndex === 0 && colIndex === 0 && isEditing ? (
+                        <input
+                          type="number"
+                          min={0}
+                          value={draft.enrolment?.firstYearIntake ?? 0}
+                          onChange={(event) => setEnrolmentField('firstYearIntake', Math.max(0, Number(event.target.value) || 0))}
+                          className="w-20 px-2 py-1 border border-slate-300 rounded text-sm text-center"
+                        />
+                      ) : (
+                        <span className="inline-block w-20 px-2 py-1 border border-slate-200 rounded bg-slate-50 text-slate-700 font-medium">
+                          {value}
+                        </span>
+                      )}
                     </td>
-                  ))}
+                    );
+                  })}
                 </tr>
               ))}
               <tr className="bg-slate-50 border-b border-slate-200">
@@ -529,8 +643,10 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
           </table>
         </div>
       </Card>
+      )}
 
-      <Card className="p-4 space-y-4">
+      {(activeSection === 'all' || activeSection === 'program-info-admissions') && (
+      <Card id="program-info-admissions" className="p-4 space-y-4">
         <h4 className="text-sm font-bold text-slate-900">6. Admission Requirements</h4>
         <TextUploadSection
           id="section-adm-a-upload"
@@ -551,7 +667,7 @@ export function ProgramInfoTab({ selectedProgram, updateProgramInfo, onExportPro
           disabled={!isEditing}
         />
       </Card>
+      )}
     </div>
   );
 }
-
