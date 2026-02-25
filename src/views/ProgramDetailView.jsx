@@ -1,5 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowLeft, BookOpen, Check, Clock, FileText, Lock, Plus, Search, Users, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Columns3,
+  Eye,
+  EyeOff,
+  FileText,
+  Info,
+  Lock,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+  UserX,
+  X
+} from 'lucide-react';
 import { PROGRAM_COLOR_PRESETS, PROGRAM_TYPES } from '../data';
 import { DerivedProgramInfoTab } from './DerivedProgramInfoTab';
 import { ProgramInfoTab } from './ProgramInfoTab';
@@ -7,6 +27,8 @@ import { Badge, Card, ColorSwatchPicker, ProgressBar } from '../ui';
 
 const DEFAULT_MAP_COLUMNS = 5;
 const MAX_MAP_COLUMNS = 6;
+const DEFAULT_AUX_MAP_COLUMNS = 10;
+const MAX_AUX_MAP_COLUMNS = 24;
 
 export function ProgramDetailView(props) {
   const {
@@ -39,18 +61,43 @@ export function ProgramDetailView(props) {
     updateProgramInfo,
     updateProgramColor,
     addProgramMapColumn,
-    updateElectiveSuggestionMaps
+    updateElectiveSuggestionMaps,
+    updateProgramPrerequisiteLinks,
+    facultyDirectory,
+    updateProgramAssignedFacultyMembers,
+    updateProgramCourseInstructorAssignments
   } = props;
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [clipboardCourse, setClipboardCourse] = useState(null);
   const [specializationSelectMode, setSpecializationSelectMode] = useState(false);
   const [selectedElectiveSlots, setSelectedElectiveSlots] = useState([]);
-  const [newBlockChooseCount, setNewBlockChooseCount] = useState(2);
   const [modalDisciplineFilter, setModalDisciplineFilter] = useState('All');
+  const [isSpecializationMapCollapsed, setIsSpecializationMapCollapsed] = useState(false);
+  const [collapsedElectiveSuggestionGroups, setCollapsedElectiveSuggestionGroups] = useState({});
   const [isEditingProgramName, setIsEditingProgramName] = useState(false);
   const [editedProgramName, setEditedProgramName] = useState('');
   const [isEditingProgramShortName, setIsEditingProgramShortName] = useState(false);
   const [editedProgramShortName, setEditedProgramShortName] = useState('');
+  const [showPrerequisiteLinks, setShowPrerequisiteLinks] = useState(false);
+  const [prerequisiteDrawMode, setPrerequisiteDrawMode] = useState(false);
+  const [prerequisiteSourceSlot, setPrerequisiteSourceSlot] = useState(null);
+  const [prerequisiteCursorPoint, setPrerequisiteCursorPoint] = useState(null);
+  const [showUnassignedCourses, setShowUnassignedCourses] = useState(false);
+  const [quickAssignCourseModal, setQuickAssignCourseModal] = useState(null);
+  const [specializationContextMenu, setSpecializationContextMenu] = useState(null);
+  const [selectedAssignableFacultyId, setSelectedAssignableFacultyId] = useState('');
+  const [facultyCourseModal, setFacultyCourseModal] = useState(null);
+  const [facultyCourseSearchTerm, setFacultyCourseSearchTerm] = useState('');
+  const [facultyCourseDisciplineFilter, setFacultyCourseDisciplineFilter] = useState('All');
+  const [facultyCourseSelectedInstanceId, setFacultyCourseSelectedInstanceId] = useState('');
+  const [showCourseCredits, setShowCourseCredits] = useState(true);
+  const [showCoreCourses, setShowCoreCourses] = useState(true);
+  const [showSpecElectives, setShowSpecElectives] = useState(true);
+  const [visibleElectiveTypes, setVisibleElectiveTypes] = useState({});
+  const [mapSlotCenters, setMapSlotCenters] = useState({});
+  const [mapPanelHeight, setMapPanelHeight] = useState(null);
+  const mapCanvasRef = useRef(null);
+  const mapSlotRefs = useRef({});
   const showCiqePanel =
     selectedProgram?.ciqeTemplateApplied ||
     !!selectedProgram?.ciqeGuidelines ||
@@ -143,6 +190,7 @@ export function ProgramDetailView(props) {
   const specializationBlocks = selectedProgram?.specializationBlocks || [];
   const electiveSuggestionMaps = selectedProgram?.electiveSuggestionMaps || {};
   const lockedCoreCourseCodes = selectedProgram?.lockedCoreCourseCodes || [];
+  const prerequisiteLinks = selectedProgram?.prerequisiteLinks || [];
   const specializationElectiveCount = selectedProgram
     ? selectedProgram.semesters.reduce(
         (acc, semester) =>
@@ -214,6 +262,44 @@ export function ProgramDetailView(props) {
     return null;
   };
 
+  const getElectiveAreaTone = (label) => {
+    const normalized = String(label || '').toLowerCase();
+    if (normalized.includes('spec')) {
+      return {
+        container: 'border-indigo-200 bg-indigo-50/40',
+        row: 'border-indigo-100 bg-indigo-50/50'
+      };
+    }
+    if (normalized.includes('game')) {
+      return {
+        container: 'border-amber-200 bg-amber-50/40',
+        row: 'border-amber-100 bg-amber-50/50'
+      };
+    }
+    if (normalized.includes('busi')) {
+      return {
+        container: 'border-cyan-200 bg-cyan-50/40',
+        row: 'border-cyan-100 bg-cyan-50/50'
+      };
+    }
+    if (normalized.includes('open')) {
+      return {
+        container: 'border-emerald-200 bg-emerald-50/40',
+        row: 'border-emerald-100 bg-emerald-50/50'
+      };
+    }
+    if (normalized.includes('general')) {
+      return {
+        container: 'border-violet-200 bg-violet-50/40',
+        row: 'border-violet-100 bg-violet-50/50'
+      };
+    }
+    return {
+      container: 'border-slate-200 bg-slate-50/40',
+      row: 'border-slate-200 bg-slate-50/50'
+    };
+  };
+
   const electiveCreditBreakdown = selectedProgram
     ? selectedProgram.semesters.reduce((acc, semester) => {
         semester.courses.forEach((course) => {
@@ -225,6 +311,325 @@ export function ProgramDetailView(props) {
       }, {})
     : {};
   const electiveTypesInMap = Object.keys(electiveCreditBreakdown).sort((a, b) => a.localeCompare(b));
+  const electiveTypeVisibilitySignature = electiveTypesInMap.join('|');
+  const assignedFacultyMemberIds = Array.isArray(selectedProgram?.assignedFacultyMemberIds)
+    ? selectedProgram.assignedFacultyMemberIds
+    : [];
+  const courseInstructorAssignments = Array.isArray(selectedProgram?.courseInstructorAssignments)
+    ? selectedProgram.courseInstructorAssignments
+        .map((assignment) => ({
+          id: String(assignment?.id || '').trim(),
+          courseInstanceId: String(assignment?.courseGlobalId || assignment?.courseInstanceId || '').trim(),
+          facultyId: String(assignment?.facultyId || '').trim()
+        }))
+        .filter((assignment) => assignment.courseInstanceId && assignment.facultyId)
+    : [];
+  const normalizedElectiveCategoryTokens = electiveTypesInMap.map((value) => value.toLowerCase().replace(/\s+elective$/i, '').trim());
+  const programCourseEntries = useMemo(() => {
+    if (!selectedProgram) return [];
+    const entries = [];
+    selectedProgram.semesters.forEach((semester, semIndex) => {
+      (semester.courses || []).forEach((course, index) => {
+        if (!course) return;
+        const slotKey = toSlotKey(semester.id, index);
+        const courseInstanceId = String(course.courseGlobalId || course.courseInstanceId || slotKey).trim();
+        entries.push({
+          slotKey,
+          semesterId: semester.id,
+          semesterName: String(semester.name || '').trim(),
+          semesterOrder: semIndex,
+          index,
+          course,
+          courseInstanceId,
+          sourceType: 'map'
+        });
+      });
+    });
+
+    (specializationBlocks || []).forEach((block, blockIndex) => {
+      (block.courses || []).forEach((course, index) => {
+        if (!course) return;
+        const slotKey = `spec:${block.id}:${index}`;
+        const courseInstanceId = String(course.courseGlobalId || course.courseInstanceId || slotKey).trim();
+        entries.push({
+          slotKey,
+          semesterId: null,
+          semesterName: `Specialization • ${block.name || `Row ${blockIndex + 1}`}`,
+          semesterOrder: 1000 + blockIndex,
+          index,
+          course,
+          courseInstanceId,
+          sourceType: 'specialization'
+        });
+      });
+    });
+
+    Object.entries(electiveSuggestionMaps || {})
+      .sort(([a], [b]) => String(a).localeCompare(String(b)))
+      .forEach(([electiveType, rows], electiveTypeIndex) => {
+        (rows || []).forEach((row, rowIndex) => {
+          (row.courses || []).forEach((course, index) => {
+            if (!course) return;
+            const slotKey = `elec:${electiveType}:${row.id}:${index}`;
+            const courseInstanceId = String(course.courseGlobalId || course.courseInstanceId || slotKey).trim();
+            entries.push({
+              slotKey,
+              semesterId: null,
+              semesterName: `${electiveType} • ${row.name || `Row ${rowIndex + 1}`}`,
+              semesterOrder: 2000 + electiveTypeIndex * 100 + rowIndex,
+              index,
+              course,
+              courseInstanceId,
+              sourceType: 'elective'
+            });
+          });
+        });
+      });
+
+    return entries;
+  }, [selectedProgram, specializationBlocks, electiveSuggestionMaps]);
+  const programCourseCodeSet = useMemo(
+    () => new Set(programCourseEntries.map((entry) => String(entry.course?.code || '').trim()).filter(Boolean)),
+    [programCourseEntries]
+  );
+  const programCourseEntryBySlotKey = useMemo(
+    () => new Map(programCourseEntries.map((entry) => [entry.slotKey, entry])),
+    [programCourseEntries]
+  );
+  const programCourseEntryByInstanceId = useMemo(
+    () => new Map(programCourseEntries.map((entry) => [entry.courseInstanceId, entry])),
+    [programCourseEntries]
+  );
+  const courseInstructorAssignmentByCourseInstanceId = useMemo(() => {
+    const byCourseInstanceId = new Map();
+    courseInstructorAssignments.forEach((assignment) => {
+      if (!programCourseEntryByInstanceId.has(assignment.courseInstanceId)) return;
+      byCourseInstanceId.set(assignment.courseInstanceId, assignment);
+    });
+    return byCourseInstanceId;
+  }, [courseInstructorAssignments, programCourseEntryByInstanceId]);
+  const assignedCourseEntriesByFaculty = useMemo(() => {
+    const byFaculty = {};
+    courseInstructorAssignmentByCourseInstanceId.forEach((assignment, courseInstanceId) => {
+      const facultyId = String(assignment.facultyId || '').trim();
+      if (!facultyId || facultyId === '__sessional__') return;
+      const courseEntry = programCourseEntryByInstanceId.get(courseInstanceId);
+      if (!courseEntry) return;
+      if (!byFaculty[facultyId]) {
+        byFaculty[facultyId] = [];
+      }
+      byFaculty[facultyId].push(courseEntry);
+    });
+    return byFaculty;
+  }, [courseInstructorAssignmentByCourseInstanceId, programCourseEntryByInstanceId]);
+  const courseCatalogByCode = useMemo(
+    () =>
+      new Map(
+        (globalCourses || []).map((course) => [String(course.code || '').trim(), course])
+      ),
+    [globalCourses]
+  );
+  const appointmentTypeToShort = (appointmentType) => {
+    const normalized = String(appointmentType || '').toLowerCase();
+    if (!normalized) return 'Faculty';
+    if (normalized.includes('sessional')) return 'Sessional';
+    if (normalized.includes('ltfm')) return 'LTFM';
+    if (normalized.includes('ttt')) return 'TTT';
+    if (normalized.includes('tf')) return 'TF';
+    return String(appointmentType || '').trim() || 'Faculty';
+  };
+  const facultyDirectoryById = useMemo(
+    () =>
+      new Map(
+        (facultyDirectory || []).map((member) => [String(member.id || '').trim(), member])
+      ),
+    [facultyDirectory]
+  );
+  const getInstructorBadgeLabelForAssignee = (assigneeId) => {
+    const normalizedAssigneeId = String(assigneeId || '').trim();
+    if (!normalizedAssigneeId) return null;
+    if (normalizedAssigneeId === '__sessional__') return 'Sessional';
+    const faculty = facultyDirectoryById.get(normalizedAssigneeId);
+    if (!faculty) return 'Faculty';
+    const trimmed = String(faculty.name || '').trim();
+    if (!trimmed) return 'Faculty';
+    const parts = trimmed.split(/\s+/).filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : trimmed;
+  };
+  const getQuickAssignWorkloadTone = (faculty) => {
+    if (!faculty || faculty.atCapacity || faculty.utilizationPercent >= 100) {
+      return 'border-red-300 bg-red-100 text-red-900';
+    }
+    if (faculty.utilizationPercent >= 75) {
+      return 'border-rose-300 bg-rose-100 text-rose-900';
+    }
+    if (faculty.utilizationPercent >= 50) {
+      return 'border-amber-300 bg-amber-100 text-amber-900';
+    }
+    return 'border-emerald-300 bg-emerald-100 text-emerald-900';
+  };
+  const catalogFacultyRows = useMemo(() => {
+    return (facultyDirectory || []).map((member) => {
+      const historyCourses = (member.teachingHistory || [])
+        .map((entry) => ({
+          code: String(entry.courseCode || '').trim(),
+          title: String(entry.courseTitle || '').trim()
+        }))
+        .filter((entry) => entry.code);
+      const typicalCourses = (member.typicalCourses || [])
+        .map((course) => ({ code: String(course.code || '').trim(), title: String(course.title || '').trim() }))
+        .filter((course) => course.code);
+      const currentCourses = (member.currentCourses || [])
+        .map((course) => ({ code: String(course.code || '').trim(), title: String(course.title || '').trim() }))
+        .filter((course) => course.code);
+      const allCourses = [...historyCourses, ...typicalCourses, ...currentCourses];
+      const seen = new Set();
+      const matchedCourses = [];
+      allCourses.forEach((course) => {
+        const key = `${course.code.toLowerCase()}|${course.title.toLowerCase()}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        if (programCourseCodeSet.has(course.code)) {
+          matchedCourses.push(course);
+        }
+      });
+      const assignedEntries = Array.isArray(assignedCourseEntriesByFaculty[member.id])
+        ? assignedCourseEntriesByFaculty[member.id]
+        : [];
+      const assignedCoursesInProgram = assignedEntries
+        .map((entry) => {
+          const code = String(entry.course?.code || '').trim();
+          const catalogCourse = courseCatalogByCode.get(code);
+          return {
+            id: `${entry.courseInstanceId}`,
+            code,
+            title: String(entry.course?.title || catalogCourse?.title || '').trim(),
+            semesterOrder: Number(entry.semesterOrder) || 0,
+            semesterName: entry.semesterName || 'Term',
+            slotNumber: Number(entry.index) + 1,
+            sourceType: entry.sourceType || 'map',
+            locationLabel: entry.semesterName || 'Term',
+            fromManualAssignment: true
+          };
+        })
+        .sort((a, b) => {
+          if (a.semesterOrder !== b.semesterOrder) {
+            return a.semesterOrder - b.semesterOrder;
+          }
+          if (a.slotNumber !== b.slotNumber) {
+            return a.slotNumber - b.slotNumber;
+          }
+          return a.code.localeCompare(b.code);
+        });
+
+      const interests = Array.isArray(member.teachingInterests) ? member.teachingInterests : [];
+      const matchedElectiveInterests = interests.filter((interest) => {
+        const normalizedInterest = String(interest || '').toLowerCase().trim();
+        return normalizedElectiveCategoryTokens.some((token) => normalizedInterest.includes(token));
+      });
+
+      return {
+        ...member,
+        matchedCourses,
+        assignedCoursesInProgram,
+        matchedElectiveInterests,
+        isAssigned: assignedFacultyMemberIds.includes(member.id)
+      };
+    });
+  }, [
+    facultyDirectory,
+    programCourseCodeSet,
+    normalizedElectiveCategoryTokens,
+    assignedFacultyMemberIds,
+    courseCatalogByCode,
+    assignedCourseEntriesByFaculty
+  ]);
+  const legacyProgramFaculty = useMemo(() => {
+    const catalogNameSet = new Set((facultyDirectory || []).map((member) => String(member.name || '').trim().toLowerCase()));
+    return (selectedProgram?.facultyMembers || []).filter((member) => {
+      const key = String(member?.name || '').trim().toLowerCase();
+      return key && !catalogNameSet.has(key);
+    });
+  }, [selectedProgram?.facultyMembers, facultyDirectory]);
+  const facultyRowsForProgram = useMemo(() => {
+    const rows = catalogFacultyRows.filter(
+      (member) => member.isAssigned || member.matchedCourses.length > 0 || member.matchedElectiveInterests.length > 0
+    );
+    const catalogIds = new Set(rows.map((member) => member.id));
+    assignedFacultyMemberIds.forEach((facultyId) => {
+      if (catalogIds.has(facultyId)) return;
+      const found = catalogFacultyRows.find((member) => member.id === facultyId);
+      if (found) {
+        rows.push(found);
+      }
+    });
+    const legacyRows = legacyProgramFaculty.map((member) => ({
+      id: `legacy_${member.id || member.name}`,
+      name: member.name,
+      role: member.role || 'Program Faculty',
+      appointmentType: member.role || 'Program Faculty',
+      matchedCourses: [],
+      assignedCoursesInProgram: [],
+      matchedElectiveInterests: [],
+      isAssigned: true,
+      isLegacy: true
+    }));
+    return [...rows, ...legacyRows];
+  }, [catalogFacultyRows, assignedFacultyMemberIds, legacyProgramFaculty]);
+  const assignedFacultyForQuickAssign = useMemo(() => {
+    const seen = new Set();
+    return facultyRowsForProgram
+      .filter((row) => !row.isLegacy)
+      .map((row) => facultyDirectoryById.get(String(row.id || '').trim()))
+      .filter((member) => {
+        if (!member) return false;
+        const id = String(member.id || '').trim();
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      })
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  }, [facultyRowsForProgram, facultyDirectoryById]);
+  const globalAssignedCourseIdsByFaculty = useMemo(() => {
+    const byFaculty = new Map();
+    (programs || []).forEach((program) => {
+      (Array.isArray(program?.courseInstructorAssignments) ? program.courseInstructorAssignments : []).forEach((assignment) => {
+        const facultyId = String(assignment?.facultyId || '').trim();
+        if (!facultyId || facultyId === '__sessional__') return;
+        const courseGlobalId = String(assignment?.courseGlobalId || assignment?.courseInstanceId || '').trim();
+        if (!courseGlobalId) return;
+        if (!byFaculty.has(facultyId)) {
+          byFaculty.set(facultyId, new Set());
+        }
+        byFaculty.get(facultyId).add(courseGlobalId);
+      });
+    });
+    return byFaculty;
+  }, [programs]);
+  const quickAssignFacultyRows = useMemo(() => {
+    return assignedFacultyForQuickAssign.map((faculty) => {
+      const load = Math.max(0, Number(faculty?.teachingLoad || 0));
+      const overloads = Math.max(0, Number(faculty?.overloads || 0));
+      const releases = Math.max(0, Number(faculty?.courseReleases || 0));
+      const capacity = Math.max(0, load + overloads - releases);
+      const assignedGlobalCourses = globalAssignedCourseIdsByFaculty.get(String(faculty?.id || '').trim())?.size || 0;
+      const remainingCapacity = Math.max(0, capacity - assignedGlobalCourses);
+      const atCapacity = remainingCapacity <= 0;
+      const utilizationPercent = capacity > 0 ? Math.min(100, Math.round((assignedGlobalCourses / capacity) * 100)) : 100;
+      return {
+        ...faculty,
+        capacity,
+        assignedGlobalCourses,
+        remainingCapacity,
+        atCapacity,
+        utilizationPercent
+      };
+    });
+  }, [assignedFacultyForQuickAssign, globalAssignedCourseIdsByFaculty]);
+  const availableFacultyForAssignment = useMemo(
+    () => catalogFacultyRows.filter((member) => !assignedFacultyMemberIds.includes(member.id)),
+    [catalogFacultyRows, assignedFacultyMemberIds]
+  );
   const curriculumOverviewGroups = useMemo(() => {
     if (!selectedProgram) return [];
     const allCourses = selectedProgram.semesters.flatMap((semester) => semester.courses.filter((course) => !!course));
@@ -267,6 +672,60 @@ export function ProgramDetailView(props) {
     );
     return ['All', ...Array.from(unique).sort((a, b) => a.localeCompare(b))];
   }, [globalCourses]);
+  const facultyAssignableProgramCourses = useMemo(
+    () =>
+      programCourseEntries
+        .map((entry) => ({
+          ...entry,
+          code: String(entry.course?.code || '').trim(),
+          title: String(entry.course?.title || '').trim(),
+          discipline: String(entry.course?.discipline || 'Uncategorized').trim()
+        }))
+        .filter((entry) => entry.code)
+        .sort((a, b) => {
+          if (a.semesterOrder !== b.semesterOrder) {
+            return a.semesterOrder - b.semesterOrder;
+          }
+          if (a.index !== b.index) {
+            return a.index - b.index;
+          }
+          return a.code.localeCompare(b.code);
+        }),
+    [programCourseEntries]
+  );
+  const facultyCourseDisciplineOptions = useMemo(() => {
+    const unique = new Set(
+      facultyAssignableProgramCourses
+        .map((entry) => String(entry.discipline || 'Uncategorized').trim())
+        .filter(Boolean)
+    );
+    return ['All', ...Array.from(unique).sort((a, b) => a.localeCompare(b))];
+  }, [facultyAssignableProgramCourses]);
+  const filteredFacultyCourseCatalog = useMemo(() => {
+    const query = String(facultyCourseSearchTerm || '').trim().toLowerCase();
+    return facultyAssignableProgramCourses
+      .filter((entry) => {
+        const discipline = String(entry.discipline || 'Uncategorized').trim();
+        const disciplineMatches =
+          facultyCourseDisciplineFilter === 'All' || discipline === facultyCourseDisciplineFilter;
+        const searchMatches =
+          query.length === 0 ||
+          entry.code.toLowerCase().includes(query) ||
+          entry.title.toLowerCase().includes(query) ||
+          String(entry.semesterName || '').toLowerCase().includes(query) ||
+          discipline.toLowerCase().includes(query);
+        return disciplineMatches && searchMatches;
+      })
+      .sort((a, b) => {
+        if (a.semesterOrder !== b.semesterOrder) {
+          return a.semesterOrder - b.semesterOrder;
+        }
+        if (a.index !== b.index) {
+          return a.index - b.index;
+        }
+        return a.code.localeCompare(b.code);
+      });
+  }, [facultyAssignableProgramCourses, facultyCourseSearchTerm, facultyCourseDisciplineFilter]);
   const selectedElectiveSlotSet = useMemo(() => new Set(selectedElectiveSlots), [selectedElectiveSlots]);
   const selectedProgramColor = selectedProgram?.color || (selectedProgram?.parentProgramId || selectedProgram?.parentProgram ? '#ede9fe' : '#dbeafe');
   const isBaseProgram = !selectedProgram?.parentProgramId && !selectedProgram?.parentProgram;
@@ -348,14 +807,131 @@ export function ProgramDetailView(props) {
       (max, block) => Math.max(max, Number(block.columnCount) || 0),
       0
     );
-    return Math.min(MAX_MAP_COLUMNS, Math.max(DEFAULT_MAP_COLUMNS, occupied, explicit));
+    return Math.min(MAX_AUX_MAP_COLUMNS, Math.max(DEFAULT_AUX_MAP_COLUMNS, occupied + 1, explicit));
   }, [specializationBlocks]);
+
+  const buildArrowHeadPath = (tip, tail, size = 14, spread = 12) => {
+    const dx = tip.x - tail.x;
+    const dy = tip.y - tail.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const ux = dx / length;
+    const uy = dy / length;
+    const baseX = tip.x - ux * size;
+    const baseY = tip.y - uy * size;
+    const px = -uy;
+    const py = ux;
+    const leftX = baseX + px * (spread / 2);
+    const leftY = baseY + py * (spread / 2);
+    const rightX = baseX - px * (spread / 2);
+    const rightY = baseY - py * (spread / 2);
+    return `M ${tip.x} ${tip.y} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`;
+  };
+
+  const buildPrerequisiteCurve = (from, to) => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+    const distance = Math.hypot(dx, dy);
+    const axisTolerance = 10;
+    const adjacentDistance = 190;
+    const shouldUseStraightLine =
+      (absDx <= axisTolerance || absDy <= axisTolerance) && distance <= adjacentDistance;
+
+    if (shouldUseStraightLine) {
+      const tip = { x: to.x, y: to.y };
+      const tail = {
+        x: from.x + dx * 0.9,
+        y: from.y + dy * 0.9
+      };
+      return {
+        path: `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
+        arrowPath: buildArrowHeadPath(tip, tail)
+      };
+    }
+
+    const direction = to.x >= from.x ? 1 : -1;
+    const bend = Math.max(24, Math.abs(to.x - from.x) * 0.35);
+    const p0 = { x: from.x, y: from.y };
+    const p1 = { x: from.x + bend * direction, y: from.y };
+    const p2 = { x: to.x - bend * direction, y: to.y };
+    const p3 = { x: to.x, y: to.y };
+    const path = `M ${p0.x} ${p0.y} C ${p1.x} ${p1.y}, ${p2.x} ${p2.y}, ${p3.x} ${p3.y}`;
+
+    const cubicPoint = (t) => {
+      const mt = 1 - t;
+      const mt2 = mt * mt;
+      const t2 = t * t;
+      const x =
+        mt2 * mt * p0.x +
+        3 * mt2 * t * p1.x +
+        3 * mt * t2 * p2.x +
+        t2 * t * p3.x;
+      const y =
+        mt2 * mt * p0.y +
+        3 * mt2 * t * p1.y +
+        3 * mt * t2 * p2.y +
+        t2 * t * p3.y;
+      return { x, y };
+    };
+
+    const tip = cubicPoint(1);
+    const tail = cubicPoint(0.92);
+    return {
+      path,
+      arrowPath: buildArrowHeadPath(tip, tail)
+    };
+  };
+
+  const prerequisitePaths = useMemo(() => {
+    return prerequisiteLinks
+      .map((link) => {
+        const from = mapSlotCenters[toSlotKey(link.fromSemesterId, Number(link.fromIndex))];
+        const to = mapSlotCenters[toSlotKey(link.toSemesterId, Number(link.toIndex))];
+        if (!from || !to) {
+          return null;
+        }
+
+        const { path, arrowPath } = buildPrerequisiteCurve(from, to);
+        return {
+          id: link.id,
+          path,
+          arrowPath
+        };
+      })
+      .filter(Boolean);
+  }, [prerequisiteLinks, mapSlotCenters]);
+
+  const draftPrerequisitePath = useMemo(() => {
+    if (!prerequisiteSourceSlot || !prerequisiteCursorPoint) return null;
+    const from = mapSlotCenters[toSlotKey(prerequisiteSourceSlot.semesterId, Number(prerequisiteSourceSlot.index))];
+    if (!from) return null;
+    return buildPrerequisiteCurve(from, prerequisiteCursorPoint);
+  }, [prerequisiteSourceSlot, prerequisiteCursorPoint, mapSlotCenters]);
+
+  const prerequisiteLinkDetails = useMemo(() => {
+    if (!selectedProgram) return [];
+    return prerequisiteLinks
+      .map((link) => {
+        const fromSemester = selectedProgram.semesters.find((semester) => semester.id === link.fromSemesterId);
+        const toSemester = selectedProgram.semesters.find((semester) => semester.id === link.toSemesterId);
+        const fromCourse = fromSemester?.courses?.[Number(link.fromIndex)] || null;
+        const toCourse = toSemester?.courses?.[Number(link.toIndex)] || null;
+        if (!fromCourse || !toCourse) return null;
+        return {
+          id: link.id,
+          fromLabel: `${fromCourse.code} (${fromSemester?.name || 'Term'} • ${Number(link.fromIndex) + 1})`,
+          toLabel: `${toCourse.code} (${toSemester?.name || 'Term'} • ${Number(link.toIndex) + 1})`
+        };
+      })
+      .filter(Boolean);
+  }, [selectedProgram, prerequisiteLinks]);
 
   const getElectiveSuggestionColumnCount = (electiveType) => {
     const rows = electiveSuggestionMaps[electiveType] || [];
     const occupied = rows.reduce((max, row) => Math.max(max, getOccupiedColumns(row.courses || [])), 0);
     const explicit = rows.reduce((max, row) => Math.max(max, Number(row.columnCount) || 0), 0);
-    return Math.min(MAX_MAP_COLUMNS, Math.max(DEFAULT_MAP_COLUMNS, occupied, explicit));
+    return Math.min(MAX_AUX_MAP_COLUMNS, Math.max(DEFAULT_AUX_MAP_COLUMNS, occupied + 1, explicit));
   };
 
   const setDragPayload = (event, payload) => {
@@ -375,6 +951,74 @@ export function ProgramDetailView(props) {
     }
   };
 
+  function toSlotKey(semesterId, index) {
+    return `${semesterId}:${index}`;
+  }
+
+  const normalizeProgramPrerequisiteLinks = (links = []) => {
+    const seen = new Set();
+    return (Array.isArray(links) ? links : [])
+      .map((link) => ({
+        id: link?.id || `pr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        fromSemesterId: link?.fromSemesterId || null,
+        fromIndex: Number(link?.fromIndex),
+        toSemesterId: link?.toSemesterId || null,
+        toIndex: Number(link?.toIndex)
+      }))
+      .filter((link) => {
+        if (!link.fromSemesterId || !link.toSemesterId) return false;
+        if (!Number.isInteger(link.fromIndex) || link.fromIndex < 0) return false;
+        if (!Number.isInteger(link.toIndex) || link.toIndex < 0) return false;
+        if (link.fromSemesterId === link.toSemesterId && link.fromIndex === link.toIndex) return false;
+        const key = `${link.fromSemesterId}:${link.fromIndex}->${link.toSemesterId}:${link.toIndex}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  };
+
+  const setProgramPrerequisiteLinks = (nextLinks) => {
+    const normalized = normalizeProgramPrerequisiteLinks(nextLinks);
+    updateProgramPrerequisiteLinks(selectedProgram.id, normalized);
+  };
+
+  const togglePrerequisiteLink = (fromSlot, toSlot) => {
+    if (!fromSlot || !toSlot) return;
+    if (fromSlot.semesterId === toSlot.semesterId && fromSlot.index === toSlot.index) return;
+
+    const match = prerequisiteLinks.find(
+      (link) =>
+        link.fromSemesterId === fromSlot.semesterId &&
+        Number(link.fromIndex) === Number(fromSlot.index) &&
+        link.toSemesterId === toSlot.semesterId &&
+        Number(link.toIndex) === Number(toSlot.index)
+    );
+    if (match) {
+      setProgramPrerequisiteLinks(prerequisiteLinks.filter((link) => link.id !== match.id));
+      return;
+    }
+
+    setProgramPrerequisiteLinks([
+      ...prerequisiteLinks,
+      {
+        id: `pr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        fromSemesterId: fromSlot.semesterId,
+        fromIndex: Number(fromSlot.index),
+        toSemesterId: toSlot.semesterId,
+        toIndex: Number(toSlot.index)
+      }
+    ]);
+  };
+
+  const removePrerequisiteLink = (linkId) => {
+    setProgramPrerequisiteLinks(prerequisiteLinks.filter((link) => link.id !== linkId));
+  };
+
+  const clearAllPrerequisiteLinks = () => {
+    setProgramPrerequisiteLinks([]);
+    setPrerequisiteSourceSlot(null);
+  };
+
   const isElectiveCourse = (course) => !!getElectiveCategory(course);
   const isSelectableForSpecialization = (course) =>
     !!course && !isLockedCoreCourse(course);
@@ -387,6 +1031,11 @@ export function ProgramDetailView(props) {
     const semester = selectedProgram.semesters.find((s) => s.id === slot.semesterId);
     return semester?.courses?.[slot.index] || null;
   };
+
+  const getIncomingPrerequisiteCount = (semesterId, index) =>
+    prerequisiteLinks.filter(
+      (link) => link.toSemesterId === semesterId && Number(link.toIndex) === Number(index)
+    ).length;
 
   const copySelectedCourse = () => {
     const course = getCourseAtSlot(selectedSlot);
@@ -487,7 +1136,7 @@ export function ProgramDetailView(props) {
       id: `spec_block_${Date.now()}`,
       name: `Specialization Row ${specializationBlocks.length + 1}`,
       rowType: 'choose',
-      chooseCount: Math.max(1, Math.min(Number(newBlockChooseCount) || 1, selectedCourses.length)),
+      chooseCount: Math.max(1, Math.min(2, selectedCourses.length)),
       columnCount: specializationColumnCount,
       courses: Array.from({ length: specializationColumnCount }).map((_, i) => selectedCourses[i] || null)
     };
@@ -633,37 +1282,6 @@ export function ProgramDetailView(props) {
     updateSpecializationBlocks(selectedProgram.id, [...specializationBlocks, newRow]);
   };
 
-  const addSpecializationColumn = () => {
-    if (specializationColumnCount >= MAX_MAP_COLUMNS) {
-      return;
-    }
-    const nextColumnCount = specializationColumnCount + 1;
-    const nextBlocks = specializationBlocks.map((block) => {
-      const nextCourses = [...(block.courses || [])];
-      while (nextCourses.length < nextColumnCount) {
-        nextCourses.push(null);
-      }
-      return { ...block, courses: nextCourses, columnCount: nextColumnCount };
-    });
-    updateSpecializationBlocks(selectedProgram.id, nextBlocks);
-  };
-
-  const addElectiveSuggestionColumn = (electiveType) => {
-    const currentColumnCount = getElectiveSuggestionColumnCount(electiveType);
-    if (currentColumnCount >= MAX_MAP_COLUMNS) {
-      return;
-    }
-    withUpdatedElectiveRows(electiveType, (rows) =>
-      rows.map((row) => {
-        const nextCourses = [...(row.courses || [])];
-        while (nextCourses.length < currentColumnCount + 1) {
-          nextCourses.push(null);
-        }
-        return { ...row, courses: nextCourses, columnCount: currentColumnCount + 1 };
-      })
-    );
-  };
-
   const applyCourseFromModal = (course) => {
     if (!electiveModalSlot) return;
     if (electiveModalSlot.mode === 'specialization-block') {
@@ -686,6 +1304,19 @@ export function ProgramDetailView(props) {
   }, [selectedProgram?.id, activeTab]);
 
   useEffect(() => {
+    if (activeTab !== 'map') {
+      setPrerequisiteDrawMode(false);
+      setPrerequisiteSourceSlot(null);
+      setPrerequisiteCursorPoint(null);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    setPrerequisiteSourceSlot(null);
+    setPrerequisiteCursorPoint(null);
+  }, [selectedProgram?.id]);
+
+  useEffect(() => {
     if (!electiveModalSlot) {
       setModalDisciplineFilter('All');
     }
@@ -701,6 +1332,112 @@ export function ProgramDetailView(props) {
     setEditedProgramShortName(getProgramShortName(selectedProgram));
   }, [selectedProgram?.id, selectedProgram?.programInfo]);
 
+  useEffect(() => {
+    setSelectedAssignableFacultyId('');
+    setShowUnassignedCourses(false);
+    setQuickAssignCourseModal(null);
+    setSpecializationContextMenu(null);
+    setIsSpecializationMapCollapsed(false);
+    setCollapsedElectiveSuggestionGroups({});
+    setFacultyCourseModal(null);
+    setFacultyCourseSearchTerm('');
+    setFacultyCourseDisciplineFilter('All');
+    setFacultyCourseSelectedInstanceId('');
+  }, [selectedProgram?.id]);
+
+  useEffect(() => {
+    setVisibleElectiveTypes((current) => {
+      const next = {};
+      electiveTypesInMap.forEach((type) => {
+        next[type] = Object.prototype.hasOwnProperty.call(current, type) ? !!current[type] : true;
+      });
+      const currentKeys = Object.keys(current);
+      if (
+        currentKeys.length === electiveTypesInMap.length &&
+        currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key) && next[key] === current[key])
+      ) {
+        return current;
+      }
+      return next;
+    });
+  }, [selectedProgram?.id, electiveTypeVisibilitySignature]);
+
+  useEffect(() => {
+    if (!specializationContextMenu?.canConvertSpec) {
+      return;
+    }
+    if (
+      selectedProgram?.type !== 'Specialization' ||
+      !specializationSelectMode ||
+      selectedElectiveSlots.length === 0
+    ) {
+      setSpecializationContextMenu(null);
+    }
+  }, [selectedProgram?.type, specializationSelectMode, selectedElectiveSlots.length, specializationContextMenu]);
+
+  useEffect(() => {
+    if (activeTab !== 'map') return undefined;
+    const container = mapCanvasRef.current;
+    if (!container) return undefined;
+
+    const recalculateCenters = () => {
+      const bounds = container.getBoundingClientRect();
+      const nextCenters = {};
+      Object.entries(mapSlotRefs.current).forEach(([slotKey, node]) => {
+        if (!node) return;
+        const rect = node.getBoundingClientRect();
+        nextCenters[slotKey] = {
+          x: rect.left - bounds.left + rect.width / 2,
+          y: rect.top - bounds.top + rect.height / 2
+        };
+      });
+      setMapSlotCenters(nextCenters);
+    };
+
+    recalculateCenters();
+    const onResize = () => recalculateCenters();
+    window.addEventListener('resize', onResize);
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => recalculateCenters());
+      resizeObserver.observe(container);
+    }
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, [activeTab, selectedProgram?.id, mapColumnCount, prerequisiteLinks, selectedProgram?.semesters]);
+
+  useEffect(() => {
+    if (activeTab !== 'map') return undefined;
+    const content = mapCanvasRef.current;
+    if (!content) return undefined;
+
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(content.getBoundingClientRect().height);
+      setMapPanelHeight((current) => (current === nextHeight ? current : nextHeight));
+    };
+
+    updateHeight();
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => updateHeight());
+      resizeObserver.observe(content);
+    }
+    window.addEventListener('resize', updateHeight);
+
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, [activeTab, selectedProgram?.id, mapColumnCount, specializationBlocks, electiveSuggestionMaps]);
+
   const saveProgramShortName = () => {
     const normalized = editedProgramShortName.trim();
     updateProgramInfo(selectedProgram.id, {
@@ -708,6 +1445,92 @@ export function ProgramDetailView(props) {
       programShortName: normalized
     });
     setIsEditingProgramShortName(false);
+  };
+
+  const assignFacultyToProgram = () => {
+    if (!selectedProgram || !selectedAssignableFacultyId) return;
+    const nextAssignedIds = Array.from(
+      new Set([...(assignedFacultyMemberIds || []), selectedAssignableFacultyId])
+    );
+    updateProgramAssignedFacultyMembers(selectedProgram.id, nextAssignedIds);
+    setSelectedAssignableFacultyId('');
+  };
+
+  const unassignFacultyFromProgram = (facultyId) => {
+    if (!selectedProgram) return;
+    const nextAssignedIds = (assignedFacultyMemberIds || []).filter((id) => id !== facultyId);
+    updateProgramAssignedFacultyMembers(selectedProgram.id, nextAssignedIds);
+  };
+
+  const closeQuickAssignCourseModal = () => {
+    setQuickAssignCourseModal(null);
+  };
+
+  const updateInstructorAssignmentForCourseInstance = (courseInstanceId, assigneeId) => {
+    if (!selectedProgram || typeof updateProgramCourseInstructorAssignments !== 'function') return;
+    const normalizedCourseInstanceId = String(courseInstanceId || '').trim();
+    const normalizedAssigneeId = String(assigneeId || '').trim();
+    if (!normalizedCourseInstanceId) return;
+    updateProgramCourseInstructorAssignments(selectedProgram.id, {
+      courseGlobalId: normalizedCourseInstanceId,
+      courseInstanceId: normalizedCourseInstanceId,
+      facultyId: normalizedAssigneeId
+    });
+  };
+
+  const assignInstructorToCourseSlot = (slotKey, assigneeId) => {
+    if (!selectedProgram) return;
+    const normalizedSlotKey = String(slotKey || '').trim();
+    const normalizedAssigneeId = String(assigneeId || '').trim();
+    if (!normalizedSlotKey || !normalizedAssigneeId) return;
+
+    const courseEntry = programCourseEntryBySlotKey.get(normalizedSlotKey);
+    if (!courseEntry?.courseInstanceId) return;
+    updateInstructorAssignmentForCourseInstance(courseEntry.courseInstanceId, normalizedAssigneeId);
+    closeQuickAssignCourseModal();
+  };
+
+  const removeInstructorFromCourseSlot = (slotKey) => {
+    if (!selectedProgram) return;
+    const normalizedSlotKey = String(slotKey || '').trim();
+    if (!normalizedSlotKey) return;
+    const courseEntry = programCourseEntryBySlotKey.get(normalizedSlotKey);
+    if (!courseEntry?.courseInstanceId) return;
+    updateInstructorAssignmentForCourseInstance(courseEntry.courseInstanceId, '');
+    closeQuickAssignCourseModal();
+  };
+
+  const openFacultyCourseModal = (faculty) => {
+    if (!faculty || faculty.isLegacy) return;
+    setFacultyCourseModal({
+      facultyId: faculty.id,
+      facultyName: faculty.name
+    });
+    setFacultyCourseSearchTerm('');
+    setFacultyCourseDisciplineFilter('All');
+    setFacultyCourseSelectedInstanceId('');
+  };
+
+  const closeFacultyCourseModal = () => {
+    setFacultyCourseModal(null);
+    setFacultyCourseSearchTerm('');
+    setFacultyCourseDisciplineFilter('All');
+    setFacultyCourseSelectedInstanceId('');
+  };
+
+  const assignCourseToFacultyInProgram = () => {
+    if (!selectedProgram || !facultyCourseModal?.facultyId || !facultyCourseSelectedInstanceId) return;
+    const facultyId = facultyCourseModal.facultyId;
+    updateInstructorAssignmentForCourseInstance(facultyCourseSelectedInstanceId, facultyId);
+    closeFacultyCourseModal();
+  };
+
+  const removeCourseAssignmentFromFaculty = (facultyId, courseAssignmentId) => {
+    if (!selectedProgram) return;
+    const normalizedFacultyId = String(facultyId || '').trim();
+    const normalizedCourseAssignmentId = String(courseAssignmentId || '').trim();
+    if (!normalizedFacultyId || !normalizedCourseAssignmentId) return;
+    updateInstructorAssignmentForCourseInstance(normalizedCourseAssignmentId, '');
   };
 
   useEffect(() => {
@@ -966,7 +1789,7 @@ export function ProgramDetailView(props) {
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-slate-500 font-medium">Faculty Involved</span>
-                      <span className="font-bold text-slate-900">{selectedProgram.facultyMembers.length}</span>
+                      <span className="font-bold text-slate-900">{facultyRowsForProgram.length}</span>
                     </div>
                   </div>
                 </Card>
@@ -1135,107 +1958,316 @@ export function ProgramDetailView(props) {
 
             return (
               <div className="space-y-6 relative">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                   <div>
-                     <h2 className="text-lg font-bold text-slate-900 mb-1">Curriculum Map</h2>
-                     <p className="text-sm font-medium text-slate-500">Default 5 courses per term. Add a 6th column if needed.</p>
-                   </div>
-                   <div className="flex flex-col sm:flex-row items-center gap-6 w-full md:w-auto">
-                     <div className="flex-1 w-full sm:w-48">
-                         <div className="flex justify-between text-xs font-bold uppercase tracking-wide text-slate-700 mb-2">
-                            <span>Total Credits</span>
-                            <span className={currentCredits >= targetCredits ? 'text-emerald-600' : ''}>{currentCredits} / {targetCredits}</span>
-                         </div>
-                         <ProgressBar percentage={creditProgress} height="h-2" color={currentCredits >= targetCredits ? 'bg-emerald-500' : 'bg-indigo-500'} />
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                  <h2 className="text-sm font-bold uppercase tracking-wide text-slate-800 text-center mb-3">Overview</h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <div className="flex justify-between text-xs font-bold uppercase tracking-wide text-slate-700 mb-2">
+                        <span>Total Credits</span>
+                        <span className={currentCredits >= targetCredits ? 'text-emerald-600' : ''}>
+                          {currentCredits} / {targetCredits}
+                        </span>
                       </div>
-                      <div className="flex-1 w-full sm:w-48">
-                         <div className="flex justify-between text-xs font-bold uppercase tracking-wide text-slate-700 mb-2">
-                            <span>Total Courses</span>
-                            <span className={currentCourses >= targetCourses ? 'text-emerald-600' : ''}>{currentCourses} / {targetCourses}</span>
-                         </div>
-                         <ProgressBar percentage={courseProgress} height="h-2" color={currentCourses >= targetCourses ? 'bg-emerald-500' : 'bg-indigo-500'} />
+                      <ProgressBar
+                        percentage={creditProgress}
+                        height="h-2"
+                        color={currentCredits >= targetCredits ? 'bg-emerald-500' : 'bg-indigo-500'}
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs font-bold uppercase tracking-wide text-slate-700 mb-2">
+                        <span>Total Courses</span>
+                        <span className={currentCourses >= targetCourses ? 'text-emerald-600' : ''}>
+                          {currentCourses} / {targetCourses}
+                        </span>
                       </div>
-                      <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                      <ProgressBar
+                        percentage={courseProgress}
+                        height="h-2"
+                        color={currentCourses >= targetCourses ? 'bg-emerald-500' : 'bg-indigo-500'}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <Card className="p-3 -mt-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-700">Toolbar</h3>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 px-2 py-1 rounded-lg border border-slate-200 bg-white">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Course Info</span>
+                      <label
+                        className={`inline-flex items-center gap-1.5 text-xs ${showCourseCredits ? 'text-slate-700' : 'text-slate-400'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={showCourseCredits}
+                          onChange={(event) => setShowCourseCredits(event.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        Credits
+                      </label>
+                      <label
+                        className={`inline-flex items-center gap-1.5 text-xs ${showCoreCourses ? 'text-slate-700' : 'text-slate-400'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={showCoreCourses}
+                          onChange={(event) => setShowCoreCourses(event.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        CORE
+                      </label>
+                      <label
+                        className={`inline-flex items-center gap-1.5 text-xs ${showSpecElectives ? 'text-slate-700' : 'text-slate-400'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={showSpecElectives}
+                          onChange={(event) => setShowSpecElectives(event.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        SPEC Electives
+                      </label>
+                      {electiveTypesInMap.map((electiveType) => (
+                        <label
+                          key={`course_info_filter_${electiveType}`}
+                          className={`inline-flex items-center gap-1.5 text-xs ${
+                            visibleElectiveTypes[electiveType] !== false ? 'text-slate-700' : 'text-slate-400'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={visibleElectiveTypes[electiveType] !== false}
+                            onChange={(event) =>
+                              setVisibleElectiveTypes((current) => ({
+                                ...current,
+                                [electiveType]: event.target.checked
+                              }))
+                            }
+                            className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          {electiveType}
+                        </label>
+                      ))}
+                      <label
+                        className={`inline-flex items-center gap-1.5 text-xs ${
+                          !showCourseCredits &&
+                          !showCoreCourses &&
+                          !showSpecElectives &&
+                          electiveTypesInMap.every((electiveType) => visibleElectiveTypes[electiveType] === false)
+                            ? 'text-slate-700'
+                            : 'text-slate-400'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={
+                            !showCourseCredits &&
+                            !showCoreCourses &&
+                            !showSpecElectives &&
+                            electiveTypesInMap.every((electiveType) => visibleElectiveTypes[electiveType] === false)
+                          }
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            if (checked) {
+                              setShowCourseCredits(false);
+                              setShowCoreCourses(false);
+                              setShowSpecElectives(false);
+                              setVisibleElectiveTypes((current) => {
+                                const next = { ...current };
+                                electiveTypesInMap.forEach((electiveType) => {
+                                  next[electiveType] = false;
+                                });
+                                return next;
+                              });
+                              return;
+                            }
+                            setShowCourseCredits(true);
+                            setShowCoreCourses(true);
+                            setShowSpecElectives(true);
+                            setVisibleElectiveTypes((current) => {
+                              const next = { ...current };
+                              electiveTypesInMap.forEach((electiveType) => {
+                                next[electiveType] = true;
+                              });
+                              return next;
+                            });
+                          }}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        Deselect all
+                      </label>
+                    </div>
+                    {selectedProgram.type === 'Specialization' && (
+                      <>
                         <button
                           type="button"
+                          title="Select eligible electives in the map for specialization conversion"
+                          onClick={() => {
+                            setSpecializationSelectMode((current) => !current);
+                            setSelectedElectiveSlots([]);
+                          }}
+                          className={`px-3 py-1.5 border rounded-lg text-sm font-medium transition-colors ${
+                            specializationSelectMode
+                              ? 'border-amber-400 bg-amber-50 text-amber-800'
+                              : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          <Check size={14} className="inline mr-1.5" />
+                          Select Electives
+                        </button>
+                      </>
+                    )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 px-2 py-1 rounded-lg border border-slate-200 bg-white">
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Pre-Reqs</span>
+                        <button
+                          type="button"
+                          title="View prerequisite arrows and enable linking mode"
+                          onClick={() => {
+                            const nextMode = !(showPrerequisiteLinks || prerequisiteDrawMode);
+                            setShowPrerequisiteLinks(nextMode);
+                            setPrerequisiteDrawMode(nextMode);
+                            setPrerequisiteSourceSlot(null);
+                            if (!nextMode) {
+                              setPrerequisiteCursorPoint(null);
+                            } else {
+                              setSpecializationSelectMode(false);
+                              setSelectedElectiveSlots([]);
+                            }
+                          }}
+                          className={`px-2.5 py-1.5 border rounded-lg text-sm font-medium transition-colors ${
+                            showPrerequisiteLinks || prerequisiteDrawMode
+                              ? 'border-slate-900 bg-slate-900 text-white'
+                              : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {showPrerequisiteLinks || prerequisiteDrawMode ? (
+                            <Eye size={14} className="inline mr-1" />
+                          ) : (
+                            <EyeOff size={14} className="inline mr-1" />
+                          )}
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          title="Remove all prerequisite links from this program map"
+                          onClick={clearAllPrerequisiteLinks}
+                          disabled={prerequisiteLinks.length === 0}
+                          className="px-2.5 py-1.5 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 size={14} className="inline mr-1" />
+                          Clear
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-slate-200 bg-white">
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Instructors</span>
+                        <button
+                          type="button"
+                          title="Show instructor assignments, highlight unassigned courses, and click any course to manage instructor"
+                          onClick={() => setShowUnassignedCourses((current) => !current)}
+                          className={`px-2.5 py-1.5 border rounded-lg text-sm font-medium transition-colors ${
+                            showUnassignedCourses
+                              ? 'border-rose-500 bg-rose-50 text-rose-700'
+                              : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          <UserX size={14} className="inline mr-1" />
+                          View
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+                {(prerequisiteDrawMode || showPrerequisiteLinks) && (
+                  <p className="text-xs text-slate-500 -mt-2">
+                    {prerequisiteDrawMode
+                      ? prerequisiteSourceSlot
+                        ? 'Select the target course to create/remove an arrow from the selected prerequisite.'
+                        : 'Select a prerequisite course, then select the course that requires it. You can also click an existing line to delete it.'
+                      : 'Use "Pre-Reqs > View" to create prerequisite arrows. Click a line or use the list in the sidebar to delete links.'}
+                  </p>
+                )}
+                
+                <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 items-stretch">
+                  <div className="xl:col-span-3">
+                    <div className="space-y-2">
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          title="Add an additional curriculum-map column (up to 6)"
                           onClick={() => addProgramMapColumn(selectedProgram.id)}
                           disabled={mapColumnCount >= MAX_MAP_COLUMNS}
-                          className="w-full sm:w-auto px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-100 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
+                          <Columns3 size={14} className="inline mr-1.5" />
                           + Column
                         </button>
-                        {selectedProgram.type === 'Specialization' && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSpecializationSelectMode((current) => !current);
-                                setSelectedElectiveSlots([]);
-                              }}
-                              className={`w-full sm:w-auto px-4 py-2 border rounded-lg text-sm font-medium transition-colors ${
-                                specializationSelectMode
-                                  ? 'border-amber-400 bg-amber-50 text-amber-800'
-                                  : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-                              }`}
-                            >
-                              {specializationSelectMode ? 'Selection Mode On' : 'Select Electives'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={addSelectedToSpecializationBlock}
-                              disabled={selectedElectiveSlots.length === 0}
-                              className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              Convert to SPEC (Elective)
-                            </button>
-                          </>
-                        )}
-                        <button
-                          type="button"
-                          onClick={copySelectedCourse}
-                          disabled={!getCourseAtSlot(selectedSlot)}
-                          className="w-full sm:w-auto px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Copy
-                        </button>
-                        <button
-                          type="button"
-                          onClick={pasteToSelectedSlot}
-                          disabled={!clipboardCourse || !selectedSlot}
-                          className="w-full sm:w-auto px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Paste
-                        </button>
                       </div>
-                      <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
-                        <button
-                          type="button"
-                          onClick={onSaveMap}
-                          className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors shadow-sm"
+                      <div
+                        ref={mapCanvasRef}
+                        className="relative"
+                      onMouseMove={(event) => {
+                        if (!prerequisiteDrawMode || !prerequisiteSourceSlot || !mapCanvasRef.current) return;
+                        const bounds = mapCanvasRef.current.getBoundingClientRect();
+                        setPrerequisiteCursorPoint({
+                          x: event.clientX - bounds.left,
+                          y: event.clientY - bounds.top
+                        });
+                      }}
+                      onMouseLeave={() => {
+                        if (prerequisiteDrawMode) {
+                          setPrerequisiteCursorPoint(null);
+                        }
+                      }}
+                    >
+                        {(showPrerequisiteLinks || prerequisiteDrawMode) && (
+                        <svg
+                          className="absolute inset-0 w-full h-full z-20"
+                          style={{ pointerEvents: prerequisiteDrawMode ? 'none' : showPrerequisiteLinks ? 'auto' : 'none' }}
                         >
-                          Save Map
-                        </button>
-                        {mapLastSavedAt && (
-                          <span className="text-[11px] text-slate-500">
-                            Last saved: {new Date(mapLastSavedAt).toLocaleString()}
-                          </span>
-                        )}
-                      </div>
-                   </div>
-                </div>
-                <p className="text-xs text-slate-500 -mt-3">
-                  Select a slot, then use Copy/Paste buttons or `Ctrl/Cmd+C` and `Ctrl/Cmd+V`.
-                </p>
-                
-                <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-                  <div className="xl:col-span-3">
-                    <div className="flex flex-col border border-slate-200 bg-slate-200 gap-[1px] rounded-xl overflow-hidden shadow-sm">
+                          {showPrerequisiteLinks &&
+                            prerequisitePaths.map((linkPath) => (
+                              <g key={linkPath.id}>
+                                <path
+                                  d={linkPath.path}
+                                  fill="none"
+                                  stroke="#4f46e5"
+                                  strokeWidth="2.2"
+                                  strokeDasharray="4 3"
+                                  style={{ pointerEvents: prerequisiteDrawMode ? 'none' : 'stroke', cursor: 'pointer' }}
+                                  onClick={() => {
+                                    if (prerequisiteDrawMode) return;
+                                    removePrerequisiteLink(linkPath.id);
+                                  }}
+                                />
+                                <path d={linkPath.arrowPath} fill="#4f46e5" style={{ pointerEvents: 'none' }} />
+                              </g>
+                            ))}
+                          {prerequisiteDrawMode && draftPrerequisitePath && (
+                            <g>
+                              <path
+                                d={draftPrerequisitePath.path}
+                                fill="none"
+                                stroke="#0f172a"
+                                strokeWidth="2"
+                                strokeDasharray="5 4"
+                                style={{ pointerEvents: 'none' }}
+                              />
+                              <path d={draftPrerequisitePath.arrowPath} fill="#0f172a" style={{ pointerEvents: 'none' }} />
+                            </g>
+                          )}
+                        </svg>
+                      )}
+                      <div className="flex flex-col border border-slate-200 bg-slate-200 gap-[1px] rounded-xl overflow-hidden shadow-sm relative z-10">
                   {selectedProgram.semesters.map((sem, semIndex) => {
                     const semName = String(sem.name || '');
                     const semLower = semName.toLowerCase();
                     const isFall = semLower.includes('fall');
                     const isWinter = semLower.includes('winter');
-                    const hasYear = semLower.includes('year');
                     const yearMatch = semName.match(/year\s+(\d+)/i);
                     const yearLabel = yearMatch ? `Year ${yearMatch[1]}` : null;
                     const seasonLabel = isFall ? 'Fall' : isWinter ? 'Winter' : null;
@@ -1276,14 +2308,82 @@ export function ProgramDetailView(props) {
                         {Array.from({ length: mapColumnCount }).map((_, i) => {
                           const course = sem.courses[i];
                           const slotKey = `${sem.id}:${i}`;
+                          const courseInstanceId = String(course?.courseGlobalId || course?.courseInstanceId || '').trim();
+                          const assignedInstructorIdForSlot = courseInstanceId
+                            ? String(
+                                courseInstructorAssignmentByCourseInstanceId.get(courseInstanceId)?.facultyId || ''
+                              ).trim()
+                            : '';
                           const isElectiveSelected = selectedElectiveSlotSet.has(slotKey);
+                          const assignedInstructorBadge = assignedInstructorIdForSlot
+                            ? getInstructorBadgeLabelForAssignee(assignedInstructorIdForSlot)
+                            : null;
+                          const hasAssignedInstructor = !!assignedInstructorBadge;
+                          const isPrerequisiteViewMode = showPrerequisiteLinks || prerequisiteDrawMode;
+                          const electiveTypeForCourse = getElectiveCategory(course);
+                          const dimmedByElectiveToggle =
+                            !!electiveTypeForCourse && visibleElectiveTypes[electiveTypeForCourse] === false;
+                          const dimmedByCoreToggle = !!course?.isCore && !showCoreCourses;
+                          const dimmedBySpecToggle = isSpecElectiveCourse(course) && !showSpecElectives;
+                          const dimmedByCourseInfoToggle = dimmedByElectiveToggle || dimmedByCoreToggle || dimmedBySpecToggle;
                           const canMarkNewCourse =
                             !!course && !isBaseProgram && !isLockedCoreCourse(course) && !isSpecElectiveCourse(course);
+                          const assignmentHighlightClass =
+                            showUnassignedCourses && course
+                              ? hasAssignedInstructor
+                                ? 'opacity-45 saturate-75'
+                                : 'ring-2 ring-rose-500 shadow-[0_0_0_2px_rgba(244,63,94,0.2)]'
+                              : '';
                           return (
                             <div 
                               key={`${sem.id}_${i}`}
-                              onClick={() => {
+                              ref={(node) => {
+                                const key = toSlotKey(sem.id, i);
+                                if (node) {
+                                  mapSlotRefs.current[key] = node;
+                                } else {
+                                  delete mapSlotRefs.current[key];
+                                }
+                              }}
+                              onClick={(event) => {
+                                if (specializationContextMenu) {
+                                  setSpecializationContextMenu(null);
+                                }
                                 setSelectedSlot({ semesterId: sem.id, index: i });
+                                if (showUnassignedCourses && course) {
+                                  setQuickAssignCourseModal({
+                                    semesterId: sem.id,
+                                    index: i,
+                                    slotKey,
+                                    courseCode: course.code,
+                                    courseTitle: course.title,
+                                    locationLabel: sem.name,
+                                    currentAssigneeId: assignedInstructorIdForSlot,
+                                    anchorX: event.clientX,
+                                    anchorY: event.clientY
+                                  });
+                                  return;
+                                }
+                                if (prerequisiteDrawMode) {
+                                  if (!course) {
+                                    setPrerequisiteSourceSlot(null);
+                                    return;
+                                  }
+                                  const currentSlot = { semesterId: sem.id, index: i };
+                                  if (
+                                    prerequisiteSourceSlot &&
+                                    prerequisiteSourceSlot.semesterId === currentSlot.semesterId &&
+                                    Number(prerequisiteSourceSlot.index) === Number(currentSlot.index)
+                                  ) {
+                                    setPrerequisiteSourceSlot(null);
+                                  } else if (!prerequisiteSourceSlot) {
+                                    setPrerequisiteSourceSlot(currentSlot);
+                                  } else {
+                                    togglePrerequisiteLink(prerequisiteSourceSlot, currentSlot);
+                                    setPrerequisiteSourceSlot(null);
+                                  }
+                                  return;
+                                }
                                 if (specializationSelectMode && isSelectableForSpecialization(course) && !course?.isSpecializationPlaceholder) {
                                   setSelectedElectiveSlots((current) =>
                                     current.includes(slotKey)
@@ -1292,15 +2392,53 @@ export function ProgramDetailView(props) {
                                   );
                                 }
                               }}
+                              onContextMenu={(event) => {
+                                if (specializationContextMenu) {
+                                  setSpecializationContextMenu(null);
+                                }
+                                if (!course) {
+                                  return;
+                                }
+                                const canConvertSpec =
+                                  selectedProgram.type === 'Specialization' &&
+                                  specializationSelectMode &&
+                                  isSelectableForSpecialization(course) &&
+                                  !course?.isSpecializationPlaceholder;
+                                const canMarkAsNew = canMarkNewCourse;
+                                if (!canConvertSpec && !canMarkAsNew) {
+                                  return;
+                                }
+                                event.preventDefault();
+                                if (canConvertSpec && !selectedElectiveSlotSet.has(slotKey)) {
+                                  setSelectedElectiveSlots((current) => [...current, slotKey]);
+                                }
+                                setSpecializationContextMenu({
+                                  anchorX: event.clientX,
+                                  anchorY: event.clientY,
+                                  semesterId: sem.id,
+                                  index: i,
+                                  canConvertSpec,
+                                  canMarkAsNew,
+                                  isNewCourse: !!course.isNewCourse
+                                });
+                              }}
                               className={`h-24 rounded-lg relative transition-colors cursor-pointer ${selectedSlot?.semesterId === sem.id && selectedSlot?.index === i ? 'ring-2 ring-indigo-500' : ''} ${isElectiveSelected ? 'ring-2 ring-amber-500' : ''} ${
+                                prerequisiteSourceSlot?.semesterId === sem.id && Number(prerequisiteSourceSlot?.index) === Number(i)
+                                  ? 'ring-2 ring-fuchsia-500'
+                                  : ''
+                              } ${
                                 course
                                   ? isLockedCoreCourse(course)
                                     ? `${course.color || 'bg-slate-200'} shadow-sm border ${course.isNewCourse ? 'border-amber-500' : 'border-slate-400/60'}`
                                     : `${course.color || 'bg-slate-200'} shadow-sm ${course.isNewCourse ? 'border border-amber-400/90' : ''}`
                                   : 'bg-slate-50 border border-dashed border-slate-300'
-                              }`}
-                              onDragOver={(e) => { e.preventDefault(); }}
+                              } ${assignmentHighlightClass} ${dimmedByCourseInfoToggle ? 'opacity-35 grayscale-[0.35]' : ''}`}
+                              onDragOver={(e) => {
+                                if (isPrerequisiteViewMode) return;
+                                e.preventDefault();
+                              }}
                               onDrop={(e) => {
+                                if (isPrerequisiteViewMode) return;
                                 e.preventDefault();
                                 const data = getDragPayload(e);
                                 if (data?.type === 'course') {
@@ -1316,15 +2454,21 @@ export function ProgramDetailView(props) {
                             >
                               {course ? (
                                 <div
-                                  draggable={!isLockedCoreCourse(course)}
+                                  draggable={!isLockedCoreCourse(course) && !isPrerequisiteViewMode}
                                   onDragStart={(e) => {
-                                    if (isLockedCoreCourse(course)) {
+                                    if (isLockedCoreCourse(course) || isPrerequisiteViewMode) {
                                       e.preventDefault();
                                       return;
                                     }
                                     setDragPayload(e, { type: 'course', semesterId: sem.id, courseIndex: i });
                                   }}
-                                  className={`w-full h-full flex flex-col items-center justify-center relative group ${isLockedCoreCourse(course) ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}
+                                  className={`w-full h-full flex flex-col items-center justify-center relative group ${
+                                    isLockedCoreCourse(course)
+                                      ? 'cursor-not-allowed'
+                                      : isPrerequisiteViewMode
+                                        ? 'cursor-pointer'
+                                        : 'cursor-grab active:cursor-grabbing'
+                                  }`}
                                 >
                                   {isLockedCoreCourse(course) && (
                                     <>
@@ -1343,30 +2487,31 @@ export function ProgramDetailView(props) {
                                       <X size={14} />
                                     </button>
                                   )}
-                                  <div className="absolute top-1.5 left-1.5 text-[10px] font-bold text-black/50 bg-white/40 px-1.5 py-0.5 rounded shadow-sm">
-                                      {course.credits !== undefined ? course.credits : 3}cr
-                                  </div>
+                                  {showCourseCredits && (
+                                    <div className="absolute top-1.5 left-1.5 text-[10px] font-bold text-black/50 bg-white/40 px-1.5 py-0.5 rounded shadow-sm">
+                                        {course.credits !== undefined ? course.credits : 3}cr
+                                    </div>
+                                  )}
+                                  {(showPrerequisiteLinks || prerequisiteDrawMode) && getIncomingPrerequisiteCount(sem.id, i) > 0 && (
+                                    <div className="absolute top-1.5 right-7 text-[10px] font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded border border-indigo-300">
+                                      Pre: {getIncomingPrerequisiteCount(sem.id, i)}
+                                    </div>
+                                  )}
                                   {course.isNewCourse && (
                                     <div className="absolute top-1.5 left-1/2 -translate-x-1/2 text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
                                       NEW
                                     </div>
                                   )}
-                                  {canMarkNewCourse && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleNewCourse(selectedProgram.id, sem.id, i);
-                                      }}
-                                      className={`absolute bottom-1 left-1 text-[10px] px-1.5 py-0.5 rounded border ${
-                                        course.isNewCourse
-                                          ? 'bg-amber-600 text-white border-amber-700'
-                                          : 'bg-white/70 text-slate-700 border-white/80'
-                                      }`}
-                                      title={course.isNewCourse ? 'Marked as NEW course' : 'Mark as NEW course'}
-                                    >
-                                      NEW
-                                    </button>
+                                  {showUnassignedCourses && assignedInstructorBadge && (
+                                    <div className="absolute top-1.5 right-1.5 flex flex-wrap justify-end gap-1 max-w-[70%]">
+                                      <span
+                                        key={`${sem.id}_${i}_${assignedInstructorBadge}`}
+                                        className="text-[10px] font-bold text-emerald-900 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300"
+                                        title="Assigned instructor"
+                                      >
+                                        {assignedInstructorBadge}
+                                      </span>
+                                    </div>
                                   )}
                                   {selectedProgram.type !== 'Specialization' && (
                                     <button
@@ -1413,12 +2558,44 @@ export function ProgramDetailView(props) {
                       </React.Fragment>
                     );
                   })}
+                      </div>
+                      </div>
                     </div>
                   </div>
-                  <div className="space-y-4">
-                    <Card className="p-4">
+                  <div
+                    className="flex flex-col gap-4 self-stretch min-h-0 overflow-y-auto"
+                    style={
+                      mapPanelHeight
+                        ? { height: `${mapPanelHeight}px`, maxHeight: `${mapPanelHeight}px` }
+                        : undefined
+                    }
+                  >
+                    <div className="flex items-start justify-end">
+                      <div className="text-right flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={onSaveMap}
+                          className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors shadow-sm"
+                        >
+                          Save Map
+                        </button>
+                        <span
+                          className={`inline-flex items-center justify-center h-8 w-8 rounded-md border ${
+                            mapLastSavedAt
+                              ? 'border-slate-300 text-slate-600 bg-white'
+                              : 'border-slate-200 text-slate-300 bg-slate-50'
+                          }`}
+                          title={mapLastSavedAt ? `Last saved: ${new Date(mapLastSavedAt).toLocaleString()}` : 'Not saved yet'}
+                        >
+                          <Info size={14} />
+                        </span>
+                      </div>
+                    </div>
+                    <Card
+                      className="p-4 flex-1 min-h-0 flex flex-col overflow-hidden"
+                    >
                       <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-3">Compliance Sidebar</h3>
-                      <div className="space-y-2 text-sm">
+                      <div className="space-y-2 text-sm flex-1 min-h-0 flex flex-col overflow-hidden">
                         <div className="flex justify-between">
                           <span className="text-slate-600">Total Credits</span>
                           <span className="font-semibold">{ciqeCurrentCredits}</span>
@@ -1456,39 +2633,78 @@ export function ProgramDetailView(props) {
                             </div>
                           )}
                         </div>
+                        <div className="pt-2 border-t border-slate-200 flex-1 min-h-0 flex flex-col overflow-hidden">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Pre-requisite Links</p>
+                            <button
+                              type="button"
+                              onClick={clearAllPrerequisiteLinks}
+                              disabled={prerequisiteLinkDetails.length === 0}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                          {prerequisiteLinkDetails.length === 0 ? (
+                            <p className="text-xs text-slate-500">No prerequisite links defined.</p>
+                          ) : (
+                            <div className="space-y-1.5 overflow-y-auto pr-1 flex-1 min-h-0">
+                              {prerequisiteLinkDetails.map((link) => (
+                                <div key={link.id} className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <div className="text-[11px] text-slate-700 font-medium">{link.fromLabel}</div>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[11px] text-slate-500">requires for</div>
+                                    <button
+                                      type="button"
+                                      onClick={() => removePrerequisiteLink(link.id)}
+                                      className="text-[10px] px-1.5 py-0.5 rounded border border-red-300 text-red-700 hover:bg-red-50"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                  <div className="text-[11px] text-slate-700 font-medium">{link.toLabel}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </Card>
                   </div>
                 </div>
 
                 {selectedProgram.type === 'Specialization' && (
-                  <Card className="p-4">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                  <Card className="p-3">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2">
                       <div>
                         <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Specialization Curriculum Map</h3>
-                        <p className="text-xs text-slate-600 mt-1">
-                          Select multiple non-core courses above, then create a specialization row from that set.
-                        </p>
-                        <div className={`mt-2 text-xs font-semibold ${specializationOverLimit ? 'text-red-700' : 'text-slate-700'}`}>
-                          Course Progress: {specializationCourseProgress}/{specializationTotalCourseTarget || 0}
-                        </div>
-                        <div className="mt-1">
-                          <ProgressBar
-                            percentage={specializationCourseProgressPercent}
-                            height="h-2"
-                            color={
-                              specializationOverLimit
-                                ? 'bg-red-500'
-                                : specializationCourseProgress >= specializationTotalCourseTarget && specializationTotalCourseTarget > 0
-                                  ? 'bg-emerald-500'
-                                  : 'bg-indigo-500'
-                            }
-                          />
-                        </div>
-                        {specializationOverLimit && (
-                          <div className="mt-1 text-xs text-red-700">
-                            Over limit: reduce specialization courses or add SPEC placeholders in the main map.
-                          </div>
+                        {!isSpecializationMapCollapsed && (
+                          <>
+                            <p className="text-xs text-slate-600 mt-1">
+                              Select multiple non-core courses above, then create a specialization row from that set.
+                            </p>
+                            <div className={`mt-2 text-xs font-semibold ${specializationOverLimit ? 'text-red-700' : 'text-slate-700'}`}>
+                              Course Progress: {specializationCourseProgress}/{specializationTotalCourseTarget || 0}
+                            </div>
+                            <div className="mt-1">
+                              <ProgressBar
+                                percentage={specializationCourseProgressPercent}
+                                height="h-2"
+                                color={
+                                  specializationOverLimit
+                                    ? 'bg-red-500'
+                                    : specializationCourseProgress >= specializationTotalCourseTarget && specializationTotalCourseTarget > 0
+                                      ? 'bg-emerald-500'
+                                      : 'bg-indigo-500'
+                                }
+                              />
+                            </div>
+                            {specializationOverLimit && (
+                              <div className="mt-1 text-xs text-red-700">
+                                Over limit: reduce specialization courses or add SPEC placeholders in the main map.
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                       <div className="flex gap-2 items-center">
@@ -1501,28 +2717,25 @@ export function ProgramDetailView(props) {
                         </button>
                         <button
                           type="button"
-                          onClick={addSpecializationColumn}
-                          disabled={specializationColumnCount >= MAX_MAP_COLUMNS || specializationBlocks.length === 0}
-                          className="px-3 py-1.5 border border-slate-300 text-slate-700 rounded text-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={() => setIsSpecializationMapCollapsed((current) => !current)}
+                          className="px-3 py-1.5 border border-slate-300 text-slate-700 rounded text-sm hover:bg-slate-50 inline-flex items-center gap-1.5"
                         >
-                          + Column
+                          {isSpecializationMapCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                          {isSpecializationMapCollapsed ? 'Expand' : 'Collapse'}
                         </button>
-                        <input
-                          type="number"
-                          min={1}
-                          value={newBlockChooseCount}
-                          onChange={(e) => setNewBlockChooseCount(Number(e.target.value) || 1)}
-                          className="w-20 px-2 py-1 border border-slate-300 rounded text-sm"
-                        />
                       </div>
                     </div>
-                    {specializationBlocks.length === 0 ? (
-                      <p className="text-sm text-slate-500">No specialization rows yet.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {specializationBlocks.map((block) => (
-                          <div key={block.id} className="border border-slate-200 rounded-lg p-3">
-                            <div className="flex flex-wrap items-center gap-2 justify-between mb-3">
+                    {!isSpecializationMapCollapsed &&
+                      (specializationBlocks.length === 0 ? (
+                        <p className="text-sm text-slate-500">No specialization rows yet.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {specializationBlocks.map((block) => (
+                            <div
+                              key={block.id}
+                              className={`border rounded-lg p-2 ${getElectiveAreaTone('SPEC Electives').container}`}
+                            >
+                            <div className="flex flex-wrap items-center gap-2 justify-between mb-1.5">
                               <div className="font-semibold text-slate-800 text-sm">{block.name}</div>
                               <div className="flex items-center gap-2 text-xs">
                                 <select
@@ -1555,15 +2768,36 @@ export function ProgramDetailView(props) {
                               </div>
                             </div>
                             <div
-                              className="grid gap-2"
-                              style={{ gridTemplateColumns: `repeat(${specializationColumnCount}, minmax(0, 1fr))` }}
+                              className="grid gap-1.5 justify-start overflow-x-auto pb-1"
+                              style={{ gridTemplateColumns: `repeat(${specializationColumnCount}, minmax(7rem, 7rem))` }}
                             >
                               {Array.from({ length: specializationColumnCount }).map((_, i) => {
                                 const rowCourse = block.courses?.[i] || null;
+                                const rowSlotKey = `spec:${block.id}:${i}`;
+                                const rowCourseInstanceId = String(
+                                  rowCourse?.courseGlobalId || rowCourse?.courseInstanceId || rowSlotKey
+                                ).trim();
+                                const assignedInstructorIdForRow = rowCourseInstanceId
+                                  ? String(
+                                      courseInstructorAssignmentByCourseInstanceId.get(rowCourseInstanceId)?.facultyId || ''
+                                    ).trim()
+                                  : '';
+                                const assignedInstructorBadge = assignedInstructorIdForRow
+                                  ? getInstructorBadgeLabelForAssignee(assignedInstructorIdForRow)
+                                  : null;
+                                const hasAssignedInstructor = !!assignedInstructorBadge;
+                                const assignmentHighlightClass =
+                                  showUnassignedCourses && rowCourse
+                                    ? hasAssignedInstructor
+                                      ? 'opacity-45 saturate-75'
+                                      : 'ring-2 ring-rose-500 shadow-[0_0_0_2px_rgba(244,63,94,0.2)]'
+                                    : '';
                                 return (
                                   <div
                                     key={`${block.id}_${i}`}
-                                    className={`h-20 rounded-lg relative transition-colors ${rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'}`}
+                                    className={`h-24 rounded-lg relative transition-colors ${
+                                      rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'
+                                    } ${assignmentHighlightClass}`}
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => {
                                       e.preventDefault();
@@ -1571,6 +2805,18 @@ export function ProgramDetailView(props) {
                                       if (data?.type === 'spec-course') {
                                         moveCourseAcrossSpecializationBlocks(data.blockId, data.courseIndex, block.id, i);
                                       }
+                                    }}
+                                    onClick={(event) => {
+                                      if (!showUnassignedCourses || !rowCourse) return;
+                                      setQuickAssignCourseModal({
+                                        slotKey: rowSlotKey,
+                                        courseCode: rowCourse.code,
+                                        courseTitle: rowCourse.title,
+                                        locationLabel: `Specialization • ${block.name}`,
+                                        currentAssigneeId: assignedInstructorIdForRow,
+                                        anchorX: event.clientX,
+                                        anchorY: event.clientY
+                                      });
                                     }}
                                   >
                                     {rowCourse ? (
@@ -1583,11 +2829,24 @@ export function ProgramDetailView(props) {
                                       >
                                         <button
                                           type="button"
-                                          onClick={() => removeCourseFromSpecializationBlock(block.id, i)}
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            removeCourseFromSpecializationBlock(block.id, i);
+                                          }}
                                           className="absolute top-1 right-1 p-0.5 text-black/50 hover:text-black rounded"
                                         >
                                           <X size={12} />
                                         </button>
+                                        {showUnassignedCourses && assignedInstructorBadge && (
+                                          <div className="absolute top-1.5 right-5 flex flex-wrap justify-end gap-1 max-w-[70%]">
+                                            <span
+                                              className="text-[10px] font-bold text-emerald-900 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300"
+                                              title="Assigned instructor"
+                                            >
+                                              {assignedInstructorBadge}
+                                            </span>
+                                          </div>
+                                        )}
                                         <div className="text-[10px] font-bold text-slate-900">{rowCourse.code}</div>
                                         <div className="text-[10px] text-center text-slate-700 leading-tight">{rowCourse.title}</div>
                                       </div>
@@ -1611,23 +2870,27 @@ export function ProgramDetailView(props) {
                                 );
                               })}
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
                   </Card>
                 )}
 
                 {electiveTypesInMap.length > 0 && (
-                  <Card className="p-4">
-                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-3">Elective Suggestion Maps</h3>
-                    <div className="space-y-4">
+                  <Card className="p-3">
+                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-2">Elective Suggestion Maps</h3>
+                    <div className="space-y-3">
                       {electiveTypesInMap.map((electiveType) => {
                         const rows = electiveSuggestionMaps[electiveType] || [];
                         const suggestionColumnCount = getElectiveSuggestionColumnCount(electiveType);
+                        const isCollapsed = !!collapsedElectiveSuggestionGroups[electiveType];
                         return (
-                          <div key={electiveType} className="border border-slate-200 rounded-lg p-3">
-                            <div className="flex items-center justify-between mb-3">
+                          <div
+                            key={electiveType}
+                            className={`border rounded-lg p-2 ${getElectiveAreaTone(electiveType).container}`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
                               <div className="text-sm font-semibold text-slate-800">{electiveType}</div>
                               <div className="flex items-center gap-2">
                                 <button
@@ -1639,21 +2902,31 @@ export function ProgramDetailView(props) {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => addElectiveSuggestionColumn(electiveType)}
-                                  disabled={suggestionColumnCount >= MAX_MAP_COLUMNS || rows.length === 0}
-                                  className="px-2.5 py-1 border border-slate-300 rounded text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  onClick={() =>
+                                    setCollapsedElectiveSuggestionGroups((current) => ({
+                                      ...current,
+                                      [electiveType]: !current[electiveType]
+                                    }))
+                                  }
+                                  className="px-2.5 py-1 border border-slate-300 rounded text-xs text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1"
                                 >
-                                  + Column
+                                  {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                                  {isCollapsed ? 'Expand' : 'Collapse'}
                                 </button>
                               </div>
                             </div>
-                            {rows.length === 0 ? (
+                            {isCollapsed ? (
+                              <p className="text-xs text-slate-500">Collapsed</p>
+                            ) : rows.length === 0 ? (
                               <p className="text-xs text-slate-500">No suggestion rows yet for this elective type.</p>
                             ) : (
-                              <div className="space-y-3">
+                              <div className="space-y-2">
                                 {rows.map((row) => (
-                                  <div key={row.id} className="border border-slate-200 rounded p-2">
-                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                  <div
+                                    key={row.id}
+                                    className={`border rounded p-1.5 ${getElectiveAreaTone(electiveType).row}`}
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                                       <div className="text-xs font-semibold text-slate-700">{row.name}</div>
                                       <div className="flex items-center gap-2 text-xs">
                                         <select
@@ -1686,15 +2959,36 @@ export function ProgramDetailView(props) {
                                       </div>
                                     </div>
                                     <div
-                                      className="grid gap-2"
-                                      style={{ gridTemplateColumns: `repeat(${suggestionColumnCount}, minmax(0, 1fr))` }}
+                                      className="grid gap-1.5 justify-start overflow-x-auto pb-1"
+                                      style={{ gridTemplateColumns: `repeat(${suggestionColumnCount}, minmax(7rem, 7rem))` }}
                                     >
                                       {Array.from({ length: suggestionColumnCount }).map((_, i) => {
                                         const rowCourse = row.courses?.[i] || null;
+                                        const rowSlotKey = `elec:${electiveType}:${row.id}:${i}`;
+                                        const rowCourseInstanceId = String(
+                                          rowCourse?.courseGlobalId || rowCourse?.courseInstanceId || rowSlotKey
+                                        ).trim();
+                                        const assignedInstructorIdForRow = rowCourseInstanceId
+                                          ? String(
+                                              courseInstructorAssignmentByCourseInstanceId.get(rowCourseInstanceId)?.facultyId || ''
+                                            ).trim()
+                                          : '';
+                                        const assignedInstructorBadge = assignedInstructorIdForRow
+                                          ? getInstructorBadgeLabelForAssignee(assignedInstructorIdForRow)
+                                          : null;
+                                        const hasAssignedInstructor = !!assignedInstructorBadge;
+                                        const assignmentHighlightClass =
+                                          showUnassignedCourses && rowCourse
+                                            ? hasAssignedInstructor
+                                              ? 'opacity-45 saturate-75'
+                                              : 'ring-2 ring-rose-500 shadow-[0_0_0_2px_rgba(244,63,94,0.2)]'
+                                            : '';
                                         return (
                                           <div
                                             key={`${row.id}_${i}`}
-                                            className={`h-20 rounded-lg relative transition-colors ${rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'}`}
+                                            className={`h-24 rounded-lg relative transition-colors ${
+                                              rowCourse ? `${rowCourse.color || 'bg-slate-200'} shadow-sm` : 'bg-slate-50 border border-dashed border-slate-300'
+                                            } ${assignmentHighlightClass}`}
                                             onDragOver={(e) => e.preventDefault()}
                                             onDrop={(e) => {
                                               e.preventDefault();
@@ -1708,6 +3002,18 @@ export function ProgramDetailView(props) {
                                                   i
                                                 );
                                               }
+                                            }}
+                                            onClick={(event) => {
+                                              if (!showUnassignedCourses || !rowCourse) return;
+                                              setQuickAssignCourseModal({
+                                                slotKey: rowSlotKey,
+                                                courseCode: rowCourse.code,
+                                                courseTitle: rowCourse.title,
+                                                locationLabel: `${electiveType} • ${row.name}`,
+                                                currentAssigneeId: assignedInstructorIdForRow,
+                                                anchorX: event.clientX,
+                                                anchorY: event.clientY
+                                              });
                                             }}
                                           >
                                             {rowCourse ? (
@@ -1724,11 +3030,24 @@ export function ProgramDetailView(props) {
                                               >
                                                 <button
                                                   type="button"
-                                                  onClick={() => removeCourseFromElectiveSuggestionRow(electiveType, row.id, i)}
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    removeCourseFromElectiveSuggestionRow(electiveType, row.id, i);
+                                                  }}
                                                   className="absolute top-1 right-1 p-0.5 text-black/50 hover:text-black rounded"
                                                 >
                                                   <X size={12} />
                                                 </button>
+                                                {showUnassignedCourses && assignedInstructorBadge && (
+                                                  <div className="absolute top-1.5 right-5 flex flex-wrap justify-end gap-1 max-w-[70%]">
+                                                    <span
+                                                      className="text-[10px] font-bold text-emerald-900 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300"
+                                                      title="Assigned instructor"
+                                                    >
+                                                      {assignedInstructorBadge}
+                                                    </span>
+                                                  </div>
+                                                )}
                                                 <div className="text-[10px] font-bold text-slate-900">{rowCourse.code}</div>
                                                 <div className="text-[10px] text-center text-slate-700 leading-tight">{rowCourse.title}</div>
                                               </div>
@@ -2028,18 +3347,397 @@ export function ProgramDetailView(props) {
           )}
 
           {activeTab === 'faculty' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {selectedProgram.facultyMembers.map(faculty => (
-                <Card key={faculty.id} className="p-4 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
-                    <Users size={20} />
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-900">{faculty.name}</div>
-                    <div className="text-sm text-slate-500">{faculty.role}</div>
-                  </div>
+            <div className="space-y-4">
+              <Card className="p-4">
+                <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800 mb-3">Assign Faculty To Program</h3>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select
+                    value={selectedAssignableFacultyId}
+                    onChange={(event) => setSelectedAssignableFacultyId(event.target.value)}
+                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">Select faculty member</option>
+                    {availableFacultyForAssignment.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.name} {member.appointmentType ? `(${member.appointmentType})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={assignFacultyToProgram}
+                    disabled={!selectedAssignableFacultyId}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Assign Faculty
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  This list includes faculty automatically matched by mapped courses and elective interests, plus explicitly assigned faculty.
+                </p>
+              </Card>
+
+              {facultyRowsForProgram.length === 0 ? (
+                <Card className="p-6 text-sm text-slate-500">
+                  No matched or assigned faculty yet.
                 </Card>
-              ))}
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {facultyRowsForProgram.map((faculty) => (
+                    <Card key={faculty.id} className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-slate-900">{faculty.name}</div>
+                          <div className="text-sm text-slate-500">{faculty.role || faculty.appointmentType || 'Faculty'}</div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {faculty.isAssigned && <Badge type="info">Assigned</Badge>}
+                          {faculty.isLegacy && <Badge type="warning">Legacy</Badge>}
+                          {!faculty.isLegacy &&
+                            !faculty.isAssigned &&
+                            (faculty.matchedCourses.length > 0 || faculty.matchedElectiveInterests.length > 0) && (
+                              <Badge type="success">Matched</Badge>
+                            )}
+                        </div>
+                      </div>
+
+                      {!faculty.isLegacy && (
+                        <>
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <div className="text-xs font-bold uppercase tracking-wide text-slate-600">
+                                Courses Assigned In This Program
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => openFacultyCourseModal(faculty)}
+                                className="text-xs px-2 py-0.5 rounded border border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                              >
+                                + Course
+                              </button>
+                            </div>
+                            {faculty.assignedCoursesInProgram.length === 0 ? (
+                              <p className="text-xs text-slate-500">No mapped or manually assigned courses.</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5">
+                                {faculty.assignedCoursesInProgram.map((course) => (
+                                  <span
+                                    key={`${faculty.id}_${course.id}`}
+                                    className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-indigo-300 bg-indigo-50 text-indigo-700"
+                                    title={`${course.code} - ${course.title} (${course.locationLabel}, slot ${course.slotNumber})`}
+                                  >
+                                    {course.code} • {course.locationLabel} S{course.slotNumber}
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        removeCourseAssignmentFromFaculty(faculty.id, course.id);
+                                      }}
+                                      className="inline-flex items-center justify-center h-3.5 w-3.5 rounded-full border border-indigo-300 bg-white/80 text-indigo-700 hover:bg-white"
+                                      title="Remove course assignment"
+                                      aria-label={`Remove ${course.code} assignment from ${faculty.name}`}
+                                    >
+                                      <X size={10} />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">
+                              Elective Interest Matches
+                            </div>
+                            {faculty.matchedElectiveInterests.length === 0 ? (
+                              <p className="text-xs text-slate-500">No elective-interest matches.</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5">
+                                {faculty.matchedElectiveInterests.map((interest) => (
+                                  <span
+                                    key={`${faculty.id}_interest_${interest}`}
+                                    className="text-xs px-2 py-0.5 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700"
+                                  >
+                                    {interest}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+
+                      {!faculty.isLegacy && faculty.isAssigned && (
+                        <button
+                          type="button"
+                          onClick={() => unassignFacultyFromProgram(faculty.id)}
+                          className="text-xs px-2.5 py-1 rounded border border-red-300 text-red-700 hover:bg-red-50"
+                        >
+                          Remove Assignment
+                        </button>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {specializationContextMenu &&
+            (specializationContextMenu.canMarkAsNew || specializationContextMenu.canConvertSpec) && (
+              <div className="fixed inset-0 z-50" onClick={() => setSpecializationContextMenu(null)}>
+                <Card
+                  className="w-64 max-w-[calc(100vw-1rem)] p-2.5"
+                  style={{
+                    position: 'fixed',
+                    left: Math.max(
+                      8,
+                      Math.min(
+                        (specializationContextMenu.anchorX || 16) + 8,
+                        (typeof window !== 'undefined' ? window.innerWidth : 1280) - 280
+                      )
+                    ),
+                    top: Math.max(
+                      8,
+                      Math.min(
+                        (specializationContextMenu.anchorY || 16) + 8,
+                        (typeof window !== 'undefined' ? window.innerHeight : 800) - 180
+                      )
+                    )
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {(() => {
+                    const contextSlotKey = toSlotKey(
+                      specializationContextMenu.semesterId,
+                      specializationContextMenu.index
+                    );
+                    const selectedCountForContext =
+                      specializationContextMenu.canConvertSpec &&
+                      !selectedElectiveSlotSet.has(contextSlotKey)
+                        ? selectedElectiveSlots.length + 1
+                        : selectedElectiveSlots.length;
+                    return (
+                      <>
+                        <div className="space-y-2">
+                          {specializationContextMenu.canMarkAsNew && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                toggleNewCourse(
+                                  selectedProgram.id,
+                                  specializationContextMenu.semesterId,
+                                  specializationContextMenu.index
+                                );
+                                setSpecializationContextMenu(null);
+                              }}
+                              className="w-full text-left px-2.5 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm font-medium hover:bg-amber-100"
+                            >
+                              {specializationContextMenu.isNewCourse ? 'Unmark NEW Course' : 'Mark as NEW Course'}
+                            </button>
+                          )}
+                          {specializationContextMenu.canConvertSpec && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                addSelectedToSpecializationBlock();
+                                setSpecializationContextMenu(null);
+                              }}
+                              disabled={selectedCountForContext === 0}
+                              className="w-full text-left px-2.5 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-800 text-sm font-medium hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Convert to SPEC (Elective)
+                            </button>
+                          )}
+                        </div>
+                        {specializationContextMenu.canConvertSpec && (
+                          <p className="mt-1.5 text-[11px] text-slate-500 px-0.5">
+                            {selectedCountForContext} elective{selectedCountForContext === 1 ? '' : 's'} selected
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </Card>
+              </div>
+            )}
+
+          {facultyCourseModal && (
+            <div className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
+              <Card className="w-full max-w-2xl mt-8 p-5 relative">
+                <button
+                  type="button"
+                  onClick={closeFacultyCourseModal}
+                  className="absolute top-3 right-3 p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                  aria-label="Close assign course modal"
+                >
+                  <X size={16} />
+                </button>
+                <h3 className="text-lg font-bold text-slate-900">Assign Course to {facultyCourseModal.facultyName}</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  Search/filter courses in this program map, then choose the exact course instance to assign.
+                </p>
+
+                <div className="mt-4 space-y-3">
+                  <input
+                    type="text"
+                    value={facultyCourseSearchTerm}
+                    onChange={(event) => setFacultyCourseSearchTerm(event.target.value)}
+                    placeholder="Search by code, title, or category..."
+                    className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  />
+                  <select
+                    value={facultyCourseDisciplineFilter}
+                    onChange={(event) => setFacultyCourseDisciplineFilter(event.target.value)}
+                    className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+                    {facultyCourseDisciplineOptions.map((discipline) => (
+                      <option key={discipline} value={discipline}>
+                        {discipline}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={facultyCourseSelectedInstanceId}
+                    onChange={(event) => setFacultyCourseSelectedInstanceId(event.target.value)}
+                    className="w-full px-3 py-2 rounded border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+                    <option value="">Select course</option>
+                    {filteredFacultyCourseCatalog.map((courseEntry) => (
+                      <option key={courseEntry.courseInstanceId} value={courseEntry.courseInstanceId}>
+                        {courseEntry.code} - {courseEntry.title} ({courseEntry.semesterName}, slot {courseEntry.index + 1})
+                      </option>
+                    ))}
+                  </select>
+                  <div className="text-xs text-slate-500">
+                    {filteredFacultyCourseCatalog.length} course{filteredFacultyCourseCatalog.length === 1 ? '' : 's'} match the current filters.
+                  </div>
+                </div>
+
+                <div className="mt-5 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeFacultyCourseModal}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={assignCourseToFacultyInProgram}
+                    disabled={!facultyCourseSelectedInstanceId}
+                    className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Assign Course
+                  </button>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {quickAssignCourseModal && (
+            <div
+              className="fixed inset-0 z-50"
+              onClick={closeQuickAssignCourseModal}
+            >
+              <Card
+                className="w-[22rem] max-w-[calc(100vw-1rem)] p-4 relative"
+                style={{
+                  position: 'fixed',
+                  left: Math.max(
+                    8,
+                    Math.min(
+                      (quickAssignCourseModal.anchorX || 16) + 10,
+                      (typeof window !== 'undefined' ? window.innerWidth : 1280) - 360
+                    )
+                  ),
+                  top: Math.max(
+                    8,
+                    Math.min(
+                      (quickAssignCourseModal.anchorY || 16) + 10,
+                      (typeof window !== 'undefined' ? window.innerHeight : 800) - 300
+                    )
+                  )
+                }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={closeQuickAssignCourseModal}
+                  className="absolute top-3 right-3 p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                  aria-label="Close quick assign instructor modal"
+                >
+                  <X size={16} />
+                </button>
+                <h3 className="text-lg font-bold text-slate-900">Assign Instructor</h3>
+                <p className="text-sm text-slate-600 mt-1">
+                  {quickAssignCourseModal.courseCode} - {quickAssignCourseModal.courseTitle}
+                </p>
+                {quickAssignCourseModal.locationLabel && (
+                  <p className="text-xs text-slate-500 mt-1">{quickAssignCourseModal.locationLabel}</p>
+                )}
+                <p className="text-xs text-slate-500 mt-1">
+                  Select an instructor from Assigned Faculty, designate as Sessional, or clear assignment.
+                </p>
+                <div className="mt-2 text-xs text-slate-600">
+                  Current: <span className="font-semibold text-slate-900">
+                    {quickAssignCourseModal.currentAssigneeId
+                      ? getInstructorBadgeLabelForAssignee(quickAssignCourseModal.currentAssigneeId) || 'Assigned'
+                      : 'Unassigned'}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                  {quickAssignFacultyRows.length === 0 ? (
+                    <div className="text-xs text-slate-500 border border-slate-200 rounded-lg p-2 bg-slate-50">
+                      No assigned faculty available yet. You can still designate this course as Sessional.
+                    </div>
+                  ) : (
+                    quickAssignFacultyRows.map((faculty) => {
+                      const workloadTone = getQuickAssignWorkloadTone(faculty);
+                      return (
+                        <button
+                          key={`quick_assign_${faculty.id}`}
+                          type="button"
+                          disabled={faculty.atCapacity}
+                          onClick={() => assignInstructorToCourseSlot(quickAssignCourseModal.slotKey, faculty.id)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg border ${workloadTone} transition-colors ${
+                            faculty.atCapacity ? 'opacity-70 cursor-not-allowed' : 'hover:brightness-[0.96]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-sm font-semibold leading-tight truncate">{faculty.name}</div>
+                            <div className="text-[10px] font-bold whitespace-nowrap">
+                              {faculty.assignedGlobalCourses}/{faculty.capacity || 0}
+                            </div>
+                          </div>
+                          <div className="text-[11px] leading-tight">
+                            {appointmentTypeToShort(faculty.appointmentType)} • Remaining: {faculty.remainingCapacity}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => assignInstructorToCourseSlot(quickAssignCourseModal.slotKey, '__sessional__')}
+                      className="w-full px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-sm font-medium hover:bg-amber-100"
+                    >
+                      Assign as Sessional
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeInstructorFromCourseSlot(quickAssignCourseModal.slotKey)}
+                      className="w-full px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 text-sm font-medium hover:bg-red-100"
+                    >
+                      Remove Instructor
+                    </button>
+                  </div>
+                </div>
+              </Card>
             </div>
           )}
         </div>

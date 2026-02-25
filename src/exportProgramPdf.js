@@ -104,15 +104,43 @@ const createPdfWriter = (doc) => {
   };
 
   const writeKeyValue = (label, value, options = {}) => {
-    const text = `${label}: ${toDisplayText(value)}`;
-    writeParagraph(text, options);
+    const {
+      indent = 0,
+      fontSize = DEFAULT_FONT_SIZE,
+      lineHeight = DEFAULT_LINE_HEIGHT,
+      spacingAfter = 2,
+      labelColumnWidth = 58
+    } = options;
+    const labelText = `${String(label || '').trim()}:`;
+    const valueText = toDisplayText(value);
+    const labelX = PAGE_MARGIN + indent;
+    const valueX = labelX + labelColumnWidth;
+    const valueWidth = Math.max(30, maxTextWidth() - indent - labelColumnWidth);
+
+    doc.setFontSize(fontSize);
+    const labelWidth = doc.getTextWidth(labelText);
+    if (labelWidth > labelColumnWidth - 2) {
+      writeParagraph(labelText, { indent, fontSize, bold: true, lineHeight, spacingAfter: 1.2 });
+      writeParagraph(valueText, { indent: indent + 3, fontSize, bold: false, lineHeight, spacingAfter });
+      return;
+    }
+
+    const valueLines = doc.splitTextToSize(valueText, valueWidth);
+    const contentHeight = Math.max(lineHeight, valueLines.length * lineHeight) + spacingAfter;
+    ensureSpace(contentHeight);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text(labelText, labelX, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(valueLines, valueX, y);
+    y += contentHeight;
   };
 
   const writeDivider = () => {
-    ensureSpace(4);
+    ensureSpace(9);
     doc.setDrawColor(180);
     doc.line(PAGE_MARGIN, y, pageWidth() - PAGE_MARGIN, y);
-    y += 3;
+    y += 8;
   };
 
   return {
@@ -166,6 +194,24 @@ const getSelectedModificationOptions = (source = {}, labels = {}) =>
   Object.entries(labels)
     .filter(([key]) => !!source?.[key])
     .map(([, label]) => label);
+
+const mixWithWhite = (hex, ratio = 0.25) => {
+  const value = String(hex || '').replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(value)) return '#f8fafc';
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  const mix = (channel) => Math.round(channel + (255 - channel) * Math.max(0, Math.min(1, ratio)));
+  return `#${mix(r).toString(16).padStart(2, '0')}${mix(g).toString(16).padStart(2, '0')}${mix(b)
+    .toString(16)
+    .padStart(2, '0')}`;
+};
+
+const hexToRgbArray = (hex) => {
+  const value = String(hex || '').replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(value)) return [241, 245, 249];
+  return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
+};
 
 const TAILWIND_TO_HEX = {
   'bg-blue-300': '#93c5fd',
@@ -263,6 +309,71 @@ const getCurriculumMapColumnCount = (program) => {
   return Math.max(5, explicit, inferred);
 };
 
+const drawEnrolmentProjectionTable = (writer, projection) => {
+  const doc = writer.doc;
+  const columns = projection?.columns || [];
+  if (columns.length === 0) return;
+  const margin = PAGE_MARGIN;
+  const tableWidth = writer.getPageWidth() - margin * 2;
+  const firstColWidth = 28;
+  const otherColWidth = (tableWidth - firstColWidth) / columns.length;
+  const headerHeight = 7;
+  const rowHeight = 6.5;
+  const totalRows = 1 + 5 + 1;
+  const tableHeight = headerHeight + rowHeight * (totalRows - 1);
+
+  writer.ensureSpace(tableHeight + 2);
+  let y = writer.getY();
+
+  doc.setDrawColor(148, 163, 184);
+  doc.setLineWidth(0.25);
+
+  doc.setFillColor(226, 232, 240);
+  doc.rect(margin, y, firstColWidth, headerHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(51, 65, 85);
+  doc.text('Level', margin + 1.5, y + 4.6);
+
+  columns.forEach((column, index) => {
+    const x = margin + firstColWidth + index * otherColWidth;
+    doc.setFillColor(226, 232, 240);
+    doc.rect(x, y, otherColWidth, headerHeight, 'FD');
+    doc.text(String(column), x + otherColWidth / 2, y + 4.6, { align: 'center' });
+  });
+  y += headerHeight;
+
+  const rows = [];
+  for (let i = 0; i < 5; i += 1) {
+    rows.push({
+      label: `Year ${i + 1}`,
+      values: (projection.matrix?.[i] || []).map((cell) => (cell === null ? '-' : cell))
+    });
+  }
+  rows.push({ label: 'Total', values: projection.totals || [] });
+
+  rows.forEach((row, rowIndex) => {
+    const isTotal = rowIndex === rows.length - 1;
+    doc.setFillColor(isTotal ? 241 : 248, isTotal ? 245 : 250, isTotal ? 249 : 252);
+    doc.rect(margin, y, firstColWidth, rowHeight, 'FD');
+    doc.setFont('helvetica', isTotal ? 'bold' : 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(51, 65, 85);
+    doc.text(row.label, margin + 1.5, y + 4.2);
+
+    row.values.forEach((value, index) => {
+      const x = margin + firstColWidth + index * otherColWidth;
+      doc.setFillColor(255, 255, 255);
+      doc.rect(x, y, otherColWidth, rowHeight, 'FD');
+      doc.setFont('helvetica', isTotal ? 'bold' : 'normal');
+      doc.text(String(value), x + otherColWidth / 2, y + 4.2, { align: 'center' });
+    });
+    y += rowHeight;
+  });
+
+  writer.setY(y + 5);
+};
+
 const drawCourseTile = (doc, x, y, width, height, course) => {
   const fillColor = resolveCourseColor(course?.color);
   const code = String(course?.code || 'N/A').trim();
@@ -336,26 +447,32 @@ const addCurriculumOverviewDiagram = (writer, program) => {
   }
 
   const groupHeight = (availableHeight - Math.max(0, groups.length - 1) * groupGap) / Math.max(1, groups.length);
-  const getGroupHeaderFill = (label) => {
-    const normalized = String(label || '').toLowerCase();
-    if (normalized.includes('core')) return [226, 232, 240];
-    if (normalized.includes('spec')) return [224, 231, 255];
-    if (normalized.includes('game')) return [254, 243, 199];
-    if (normalized.includes('busi')) return [209, 250, 229];
-    if (normalized.includes('general')) return [240, 249, 255];
-    return [241, 245, 249];
+  const getGroupHeaderFill = (group) => {
+    const sampleCourse =
+      (group?.courses || []).find((course) => !!course?.color) ||
+      (group?.subgroups || []).flatMap((subgroup) => subgroup.courses || []).find((course) => !!course?.color) ||
+      null;
+    if (sampleCourse?.color) {
+      return resolveCourseColor(sampleCourse.color);
+    }
+
+    const normalized = String(group?.label || '').toLowerCase();
+    if (normalized.includes('core')) return '#93c5fd';
+    if (normalized.includes('spec')) return '#a5b4fc';
+    if (normalized.includes('game')) return '#d8b4fe';
+    if (normalized.includes('busi')) return '#86efac';
+    if (normalized.includes('general')) return '#7dd3fc';
+    return '#cbd5e1';
   };
-  const lightenColor = (rgb, ratio = 0.7) =>
-    rgb.map((value) => Math.round(value + (255 - value) * Math.max(0, Math.min(1, ratio))));
 
   groups.forEach((group, groupIndex) => {
     const y = pageTop + groupIndex * (groupHeight + groupGap);
     const titleFontSize = Math.max(10, Math.min(18, groupHeight * 0.42));
     const subtitleFontSize = Math.max(5.5, Math.min(8.5, titleFontSize * 0.5));
 
-    const headerFill = getGroupHeaderFill(group.label);
-    const bodyFill = lightenColor(headerFill, 0.74);
-    doc.setFillColor(...bodyFill);
+    const headerFill = getGroupHeaderFill(group);
+    const bodyFill = mixWithWhite(headerFill, 0.2);
+    doc.setFillColor(...hexToRgbArray(bodyFill));
     doc.setDrawColor(203, 213, 225);
     doc.rect(contentX, y, contentWidth, groupHeight, 'FD');
 
@@ -531,14 +648,7 @@ const addBaseProgramInfo = (writer, info = {}) => {
   );
 
   const enrolmentProjection = getEnrolmentProjection(info.enrolment || {});
-  writer.writeParagraph(`Academic Years: ${enrolmentProjection.columns.join(' | ')}`);
-  enrolmentProjection.matrix.forEach((row, index) => {
-    writer.writeParagraph(
-      `Year ${index + 1}: ${row.map((cell) => (cell === null ? '-' : cell)).join(' | ')}`,
-      { indent: 3 }
-    );
-  });
-  writer.writeParagraph(`Total: ${enrolmentProjection.totals.join(' | ')}`, { indent: 3, bold: true });
+  drawEnrolmentProjectionTable(writer, enrolmentProjection);
 
   writer.writeSubHeading('6. Admission Requirements');
   writer.writeParagraph('A) Formal Admission Requirements', { bold: true });

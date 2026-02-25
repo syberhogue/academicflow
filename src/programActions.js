@@ -2,6 +2,127 @@ import { getDefaultProgramColor } from './data';
 import { createDefaultProgramInfo } from './programInfo';
 
 const DEFAULT_MAP_COLUMNS = 5;
+const createCourseInstanceId = () => `ci_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+const toCourseWithPrerequisites = (course, options = {}) => {
+  if (!course) return null;
+  const forceNewCourseInstanceId = !!options.forceNewCourseInstanceId;
+  const existingCourseInstanceId = String(
+    course.courseInstanceId || course.mapCourseId || course.instanceId || ''
+  ).trim();
+  const prerequisites = Array.isArray(course.prerequisites)
+    ? course.prerequisites.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  return {
+    ...course,
+    prerequisites,
+    courseInstanceId: forceNewCourseInstanceId
+      ? createCourseInstanceId()
+      : existingCourseInstanceId || createCourseInstanceId()
+  };
+};
+
+const normalizePrerequisiteLinks = (links = []) => {
+  const seen = new Set();
+  return (Array.isArray(links) ? links : [])
+    .map((link) => ({
+      id: link?.id || `pr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      fromSemesterId: link?.fromSemesterId || null,
+      fromIndex: Number(link?.fromIndex),
+      toSemesterId: link?.toSemesterId || null,
+      toIndex: Number(link?.toIndex)
+    }))
+    .filter((link) => {
+      if (!link.fromSemesterId || !link.toSemesterId) return false;
+      if (!Number.isInteger(link.fromIndex) || link.fromIndex < 0) return false;
+      if (!Number.isInteger(link.toIndex) || link.toIndex < 0) return false;
+      if (link.fromSemesterId === link.toSemesterId && link.fromIndex === link.toIndex) return false;
+      const key = `${link.fromSemesterId}:${link.fromIndex}->${link.toSemesterId}:${link.toIndex}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const prunePrerequisiteLinksBySlot = (links = [], semesterId, index) =>
+  normalizePrerequisiteLinks(links).filter(
+    (link) =>
+      !(link.fromSemesterId === semesterId && link.fromIndex === index) &&
+      !(link.toSemesterId === semesterId && link.toIndex === index)
+  );
+
+const remapPrerequisiteLinksAfterSwap = (links = [], sourceSemId, sourceIndex, targetSemId, targetIndex) => {
+  const remapEndpoint = (semesterId, index) => {
+    if (semesterId === sourceSemId && index === sourceIndex) {
+      return { semesterId: targetSemId, index: targetIndex };
+    }
+    if (semesterId === targetSemId && index === targetIndex) {
+      return { semesterId: sourceSemId, index: sourceIndex };
+    }
+    return { semesterId, index };
+  };
+
+  const remapped = normalizePrerequisiteLinks(links).map((link) => {
+    const from = remapEndpoint(link.fromSemesterId, link.fromIndex);
+    const to = remapEndpoint(link.toSemesterId, link.toIndex);
+    return {
+      ...link,
+      fromSemesterId: from.semesterId,
+      fromIndex: from.index,
+      toSemesterId: to.semesterId,
+      toIndex: to.index
+    };
+  });
+  return normalizePrerequisiteLinks(remapped);
+};
+
+const applyPrerequisiteMetadata = (semesters = [], links = []) => {
+  const normalizedSemesters = (semesters || []).map((semester) => ({
+    ...semester,
+    courses: (semester.courses || []).map((course) => toCourseWithPrerequisites(course))
+  }));
+  const slotCourseCode = new Map();
+  normalizedSemesters.forEach((semester) => {
+    (semester.courses || []).forEach((course, index) => {
+      if (!course?.code) return;
+      slotCourseCode.set(`${semester.id}:${index}`, course.code);
+    });
+  });
+
+  const normalizedLinks = normalizePrerequisiteLinks(links).filter((link) => {
+    const fromKey = `${link.fromSemesterId}:${link.fromIndex}`;
+    const toKey = `${link.toSemesterId}:${link.toIndex}`;
+    return slotCourseCode.has(fromKey) && slotCourseCode.has(toKey);
+  });
+
+  const prerequisitesByTarget = new Map();
+  normalizedLinks.forEach((link) => {
+    const targetKey = `${link.toSemesterId}:${link.toIndex}`;
+    const prereqCode = slotCourseCode.get(`${link.fromSemesterId}:${link.fromIndex}`);
+    if (!prereqCode) return;
+    const current = prerequisitesByTarget.get(targetKey) || [];
+    current.push(prereqCode);
+    prerequisitesByTarget.set(targetKey, current);
+  });
+
+  const semestersWithPrereqs = normalizedSemesters.map((semester) => ({
+    ...semester,
+    courses: (semester.courses || []).map((course, index) => {
+      if (!course) return null;
+      const key = `${semester.id}:${index}`;
+      const prerequisites = prerequisitesByTarget.get(key) || [];
+      return {
+        ...course,
+        prerequisites
+      };
+    })
+  }));
+
+  return {
+    semesters: semestersWithPrereqs,
+    prerequisiteLinks: normalizedLinks
+  };
+};
 
 export const createProgramFromForm = (formData, existingPrograms = []) => {
   const timestamp = Date.now();
@@ -49,6 +170,7 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
           course
             ? {
                 ...course,
+                prerequisites: Array.isArray(course.prerequisites) ? [...course.prerequisites] : [],
                 isNewCourse: false
               }
             : null
@@ -77,6 +199,14 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
       courses: []
     }));
   };
+
+  const inheritedPrerequisiteLinks = parentProgram?.prerequisiteLinks
+    ? normalizePrerequisiteLinks(parentProgram.prerequisiteLinks)
+    : [];
+  const semestersWithPrerequisiteMetadata = applyPrerequisiteMetadata(
+    buildSemesters(),
+    inheritedPrerequisiteLinks
+  );
 
   const newProgramBase = {
     id: `prog_${timestamp}`,
@@ -117,7 +247,8 @@ export const createProgramFromForm = (formData, existingPrograms = []) => {
       { id: 'm5', name: 'Senate Approval', completed: false, date: null },
       { id: 'm6', name: 'Ministry Submission', completed: false, date: null }
     ],
-    semesters: buildSemesters(),
+    semesters: semestersWithPrerequisiteMetadata.semesters,
+    prerequisiteLinks: semestersWithPrerequisiteMetadata.prerequisiteLinks,
     reviews: [],
     mapColumns: DEFAULT_MAP_COLUMNS,
     programInfo: null,
@@ -138,6 +269,7 @@ export const createGlobalCourseFromForm = (formData, colors) => ({
   code: formData.get('code'),
   title: formData.get('title'),
   discipline: formData.get('discipline') ? String(formData.get('discipline')).trim() : undefined,
+  prerequisites: [],
   credits: Number(formData.get('credits') || 3),
   color: formData.get('color') ? String(formData.get('color')) : colors[Math.floor(Math.random() * colors.length)]
 });
@@ -148,18 +280,23 @@ export const insertCourseInProgram = (programs, progId, semesterId, index, cours
       return program;
     }
 
-    return {
-      ...program,
-      semesters: program.semesters.map((semester) => {
+    const updatedSemesters = program.semesters.map((semester) => {
         if (semester.id !== semesterId) {
           return semester;
         }
 
         const updatedCourses = [...semester.courses];
-        updatedCourses[index] = course;
+        updatedCourses[index] = toCourseWithPrerequisites(course, { forceNewCourseInstanceId: true });
 
         return { ...semester, courses: updatedCourses };
-      })
+      });
+
+    const nextLinks = prunePrerequisiteLinksBySlot(program.prerequisiteLinks || [], semesterId, index);
+    const withPrerequisites = applyPrerequisiteMetadata(updatedSemesters, nextLinks);
+    return {
+      ...program,
+      semesters: withPrerequisites.semesters,
+      prerequisiteLinks: withPrerequisites.prerequisiteLinks
     };
   });
 
@@ -169,9 +306,7 @@ export const removeCourseFromProgram = (programs, progId, semesterId, courseInde
       return program;
     }
 
-    return {
-      ...program,
-      semesters: program.semesters.map((semester) => {
+    const updatedSemesters = program.semesters.map((semester) => {
         if (semester.id !== semesterId) {
           return semester;
         }
@@ -183,7 +318,14 @@ export const removeCourseFromProgram = (programs, progId, semesterId, courseInde
           ...semester,
           courses: updatedCourses
         };
-      })
+      });
+
+    const nextLinks = prunePrerequisiteLinksBySlot(program.prerequisiteLinks || [], semesterId, courseIndex);
+    const withPrerequisites = applyPrerequisiteMetadata(updatedSemesters, nextLinks);
+    return {
+      ...program,
+      semesters: withPrerequisites.semesters,
+      prerequisiteLinks: withPrerequisites.prerequisiteLinks
     };
   });
 
@@ -211,5 +353,17 @@ export const swapCoursesAcrossSemesters = (programs, progId, sourceSemId, source
     sourceSemester.courses[sourceIndex] = targetCourse;
     targetSemester.courses[targetIndex] = sourceCourse;
 
-    return { ...program, semesters };
+    const remappedLinks = remapPrerequisiteLinksAfterSwap(
+      program.prerequisiteLinks || [],
+      sourceSemId,
+      sourceIndex,
+      targetSemId,
+      targetIndex
+    );
+    const withPrerequisites = applyPrerequisiteMetadata(semesters, remappedLinks);
+    return {
+      ...program,
+      semesters: withPrerequisites.semesters,
+      prerequisiteLinks: withPrerequisites.prerequisiteLinks
+    };
   });
