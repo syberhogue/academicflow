@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, GraduationCap, LayoutDashboard, Menu, Settings, Star, Users, X } from 'lucide-react';
+import { BookOpen, CalendarDays, GraduationCap, LayoutDashboard, Menu, Settings, Star, Users, X } from 'lucide-react';
 import { COURSE_COLORS, INITIAL_COURSES, INITIAL_DATA, getDefaultProgramColor } from './src/data';
 import { getTodayIsoDate, normalizeProgramInfo } from './src/programInfo';
 import { CreateProgramView } from './src/views/CreateProgramView';
 import { DashboardView } from './src/views/DashboardView';
 import { FacultyView } from './src/views/FacultyView';
 import { GlobalCoursesView } from './src/views/GlobalCoursesView';
+import { PlanningView } from './src/views/PlanningView';
 import { ProgramDetailView } from './src/views/ProgramDetailView';
 import {
   createGlobalCourseFromForm,
@@ -20,6 +21,7 @@ const MAP_SAVED_AT_STORAGE_KEY = 'academicflow.mapSavedAt.v1';
 const FAVORITE_PROGRAM_IDS_STORAGE_KEY = 'academicflow.favoriteProgramIds.v1';
 const COURSE_CATEGORIES_STORAGE_KEY = 'academicflow.courseCategories.v1';
 const FACULTY_DIRECTORY_STORAGE_KEY = 'academicflow.facultyDirectory.v1';
+const PLANNING_STORAGE_KEY = 'academicflow.planning.v1';
 const DEFAULT_MAP_COLUMNS = 5;
 const MAX_MAP_COLUMNS = 6;
 const FACULTY_TERM_OPTIONS = ['Fall', 'Winter', 'Spring/Summer'];
@@ -659,11 +661,25 @@ const loadSavedAtFromStorage = () => {
   }
 };
 
+const loadPlanningFromStorage = () => {
+  try {
+    const stored = localStorage.getItem(PLANNING_STORAGE_KEY);
+    if (!stored) return { years: [] };
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object') return { years: [] };
+    return parsed;
+  } catch (error) {
+    console.error('Failed to load planning data from localStorage', error);
+    return { years: [] };
+  }
+};
+
 export default function App() {
   const [programs, setPrograms] = useState(loadProgramsFromStorage);
   const [globalCourses, setGlobalCourses] = useState(() => INITIAL_COURSES.map((course) => normalizeCourseRecord(course)));
   const [courseCategories, setCourseCategories] = useState(loadCourseCategoriesFromStorage);
   const [facultyDirectory, setFacultyDirectory] = useState(loadFacultyDirectoryFromStorage);
+  const [planningData, setPlanningData] = useState(loadPlanningFromStorage);
   const [mapLastSavedAt, setMapLastSavedAt] = useState(loadSavedAtFromStorage);
   const [createSeed, setCreateSeed] = useState(null);
   const [activeView, setActiveView] = useState('dashboard');
@@ -727,6 +743,14 @@ export default function App() {
       console.error('Failed to persist faculty directory', error);
     }
   }, [facultyDirectory]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PLANNING_STORAGE_KEY, JSON.stringify(planningData || { years: [] }));
+    } catch (error) {
+      console.error('Failed to persist planning data', error);
+    }
+  }, [planningData]);
 
   useEffect(() => {
     const inferred = Array.from(
@@ -1482,6 +1506,12 @@ export default function App() {
             >
               <Users size={18} /> Faculty
             </button>
+            <button
+              onClick={() => navigateTo('planning')}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === 'planning' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}
+            >
+              <CalendarDays size={18} /> Planning
+            </button>
           </nav>
         </div>
 
@@ -1610,6 +1640,15 @@ export default function App() {
             addCategory={addCourseCategory}
             onAddFacultyMember={addFacultyMember}
             onUpdateFacultyMember={updateFacultyMember}
+          />
+        )}
+        {activeView === 'planning' && (
+          <PlanningView
+            planningData={planningData}
+            onUpdatePlanningData={setPlanningData}
+            globalCourses={globalCourses}
+            facultyDirectory={facultyDirectory}
+            programs={programs}
           />
         )}
       </main>
