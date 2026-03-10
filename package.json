@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy:pages": "npm run build && wrangler pages deploy dist"
+    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name academicflow --branch main"
   },
   "dependencies": {
     "dompurify": "^3.3.2",
